@@ -1,0 +1,1 @@
+{{- include "mimir.memcached.serviceMonitor" (dict "ctx" $ "component" "memcached-chunks" ) }}
