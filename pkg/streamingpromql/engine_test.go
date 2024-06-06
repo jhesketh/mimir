@@ -462,6 +462,10 @@ func TestMemoryConsumptionLimit(t *testing.T) {
 			some_metric{idx="3"} 0+1x5
 			some_metric{idx="4"} 0+1x5
 			some_metric{idx="5"} 0+1x5
+			some_histogram{idx="1"} {{schema:1 sum:10 count:9 buckets:[3 3 3]}}x5
+			some_histogram{idx="2"} {{schema:1 sum:10 count:9 buckets:[3 3 3]}}x5
+			mixed_metric_histogram{idx="1"} 0 3 {{schema:1 sum:10 count:9 buckets:[3 3 3]}} {{schema:2 sum:2 count:4 buckets:[1 2 1]}} 6
+			mixed_metric_histogram{idx="1"} 0 3 {{schema:1 sum:10 count:9 buckets:[3 3 3]}} {{schema:2 sum:2 count:4 buckets:[1 2 1]}} 6
 	`)
 	t.Cleanup(func() { require.NoError(t, storage.Close()) })
 
@@ -498,11 +502,16 @@ func TestMemoryConsumptionLimit(t *testing.T) {
 			shouldSucceed: true,
 
 			// Each series has five samples, which will be rounded up to 8 (the nearest power of two) by the bucketed pool.
-			// At peak we'll hold in memory: the running total for the sum() (a float and a bool at each step, with the number of steps rounded to the nearest power of 2), and the next series from the selector.
+			// At peak we'll hold in memory:
+			//  - the running total for the sum() (a float and a bool at each step, with the number of steps rounded to the nearest power of 2),
+			//  - the next series from the selector,
 			rangeQueryLimit: 8*(pooling.Float64Size+pooling.BoolSize) + 8*pooling.FPointSize,
 
 			// Each series has one sample, which is already a power of two.
-			// At peak we'll hold in memory: the running total for the sum() (a float and a bool), the next series from the selector, and the output sample.
+			// At peak we'll hold in memory:
+			//  - the running total for the sum() (a float and a bool),
+			//  - the next series from the selector,
+			//  - the output sample,
 			instantQueryLimit: pooling.Float64Size + pooling.BoolSize + pooling.FPointSize + pooling.VectorSampleSize,
 		},
 		"limit enabled, query selects more samples than limit but should not load all of them into memory at once, and peak consumption is over limit": {
@@ -517,6 +526,21 @@ func TestMemoryConsumptionLimit(t *testing.T) {
 			// At peak we'll hold in memory: the running total for the sum() (a float and a bool), the next series from the selector, and the output sample.
 			instantQueryLimit: pooling.Float64Size + pooling.BoolSize + pooling.FPointSize + pooling.VectorSampleSize - 1,
 		},
+		"hitsogram: limit enabled, but query does not exceed limit": {
+			expr:              "some_histogram",
+			rangeQueryLimit:   2000,
+			instantQueryLimit: 2000,
+			shouldSucceed:     true,
+		},
+		"histgoram: limit enabled, and query exceeds limit": {
+			expr:          "some_metric",
+			shouldSucceed: false,
+
+			// Allow only a single sample.
+			rangeQueryLimit:   pooling.HPointSize,
+			instantQueryLimit: pooling.HPointSize,
+		},
+		// TODO: test the other limit cases for histograms and mixed-metrics
 	}
 
 	for name, testCase := range testCases {
