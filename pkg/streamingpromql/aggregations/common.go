@@ -22,6 +22,7 @@ type AggregationGroup interface {
 type AggregationGroupFactory func() AggregationGroup
 
 var AggregationGroupFactories = map[parser.ItemType]AggregationGroupFactory{
+	parser.AVG: func() AggregationGroup { return &AvgAggregationGroup{} },
 	parser.MAX: func() AggregationGroup { return &MinMaxAggregationGroup{max: true} },
 	parser.MIN: func() AggregationGroup { return &MinMaxAggregationGroup{max: false} },
 	parser.SUM: func() AggregationGroup { return &SumAggregationGroup{} },
