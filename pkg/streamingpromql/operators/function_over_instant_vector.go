@@ -55,11 +55,7 @@ func (m *FunctionOverInstantVector) SeriesMetadata(ctx context.Context) ([]types
 		return nil, err
 	}
 
-	if m.Func.SeriesMetadataFunction.Func != nil {
-		return m.Func.SeriesMetadataFunction.Func(metadata, m.MemoryConsumptionTracker)
-	}
-
-	return metadata, nil
+	return m.Func.SeriesMetadataFunction.Func(metadata, m.MemoryConsumptionTracker)
 }
 
 func (m *FunctionOverInstantVector) NextSeries(ctx context.Context) (types.InstantVectorSeriesData, error) {
@@ -68,9 +64,10 @@ func (m *FunctionOverInstantVector) NextSeries(ctx context.Context) (types.Insta
 		return types.InstantVectorSeriesData{}, err
 	}
 
-	return m.Func.SeriesDataFunc(series, m.MemoryConsumptionTracker)
+	return m.Func.SeriesDataFunc.Func(series, m.MemoryConsumptionTracker)
 }
 
 func (m *FunctionOverInstantVector) Close() {
 	m.Inner.Close()
+	m.Func.SeriesDataFunc.Close()
 }

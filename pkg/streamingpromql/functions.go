@@ -84,7 +84,7 @@ func InstantVectorTransformationFunctionOperatorFactory(name string, seriesDataF
 //   - metadataFunc: The function for handling metadata
 func InstantVectorLabelManipulationFunctionOperatorFactory(name string, metadataFunc functions.SeriesMetadataFunctionDefinition) InstantVectorFunctionOperatorFactory {
 	f := functions.FunctionOverInstantVector{
-		SeriesDataFunc:         functions.PassthroughData,
+		SeriesDataFunc:         functions.NewPassthroughDropHistogramsFunction(),
 		SeriesMetadataFunction: metadataFunc,
 	}
 
@@ -148,7 +148,7 @@ func LabelReplaceFunctionOperatorFactory() InstantVectorFunctionOperatorFactory 
 		inner, ok := args[0].(types.InstantVectorOperator)
 		if !ok {
 			// Should be caught by the PromQL parser, but we check here for safety.
-			return nil, fmt.Errorf("expected a range vector for 1st argument for label_replace, got %T", args[0])
+			return nil, fmt.Errorf("expected an instant vector for 1st argument for label_replace, got %T", args[0])
 		}
 
 		dstLabel, ok := args[1].(types.StringOperator)
@@ -176,7 +176,7 @@ func LabelReplaceFunctionOperatorFactory() InstantVectorFunctionOperatorFactory 
 		}
 
 		f := functions.FunctionOverInstantVector{
-			SeriesDataFunc: functions.PassthroughData,
+			SeriesDataFunc: functions.NewPassthroughFunction(),
 			SeriesMetadataFunction: functions.SeriesMetadataFunctionDefinition{
 				Func:                     functions.LabelReplaceFactory(dstLabel, replacement, srcLabel, regex),
 				NeedsSeriesDeduplication: true,
@@ -184,6 +184,46 @@ func LabelReplaceFunctionOperatorFactory() InstantVectorFunctionOperatorFactory 
 		}
 
 		o := operators.NewFunctionOverInstantVector(inner, memoryConsumptionTracker, f, expressionPosition)
+
+		return operators.NewDeduplicateAndMerge(o, memoryConsumptionTracker), nil
+	}
+}
+
+func ClampFunctionOperatorFactory() InstantVectorFunctionOperatorFactory {
+	return func(args []types.Operator, memoryConsumptionTracker *limiting.MemoryConsumptionTracker, _ *annotations.Annotations, expressionPosition posrange.PositionRange) (types.InstantVectorOperator, error) {
+		if len(args) != 3 {
+			// Should be caught by the PromQL parser, but we check here for safety.
+			return nil, fmt.Errorf("expected exactly 3 argument for clamp, got %v", len(args))
+		}
+
+		v, ok := args[0].(types.InstantVectorOperator)
+		if !ok {
+			// Should be caught by the PromQL parser, but we check here for safety.
+			return nil, fmt.Errorf("expected an instant vector for 1st argument for clamp, got %T", args[0])
+		}
+
+		min, ok := args[1].(types.ScalarOperator)
+		if !ok {
+			// Should be caught by the PromQL parser, but we check here for safety.
+			return nil, fmt.Errorf("expected a scalar for 2nd argument for clamp, got %T", args[1])
+		}
+
+		max, ok := args[2].(types.ScalarOperator)
+		if !ok {
+			// Should be caught by the PromQL parser, but we check here for safety.
+			return nil, fmt.Errorf("expected a scalar for 3rd argument for clamp, got %T", args[2])
+		}
+
+		sdf, err := functions.NewClampFunction(memoryConsumptionTracker, min, max)
+		if err != nil {
+			return nil, err
+		}
+		f := functions.FunctionOverInstantVector{
+			SeriesDataFunc:         sdf,
+			SeriesMetadataFunction: functions.DropSeriesName,
+		}
+
+		o := operators.NewFunctionOverInstantVector(v, memoryConsumptionTracker, f, expressionPosition)
 
 		return operators.NewDeduplicateAndMerge(o, memoryConsumptionTracker), nil
 	}
@@ -202,14 +242,15 @@ var instantVectorFunctionOperatorFactories = map[string]InstantVectorFunctionOpe
 	"atanh":             InstantVectorTransformationFunctionOperatorFactory("atanh", functions.Atanh),
 	"avg_over_time":     FunctionOverRangeVectorOperatorFactory("avg_over_time", functions.AvgOverTime),
 	"ceil":              InstantVectorTransformationFunctionOperatorFactory("ceil", functions.Ceil),
+	"clamp":             ClampFunctionOperatorFactory(),
 	"cos":               InstantVectorTransformationFunctionOperatorFactory("cos", functions.Cos),
 	"cosh":              InstantVectorTransformationFunctionOperatorFactory("cosh", functions.Cosh),
 	"count_over_time":   FunctionOverRangeVectorOperatorFactory("count_over_time", functions.CountOverTime),
 	"deg":               InstantVectorTransformationFunctionOperatorFactory("deg", functions.Deg),
 	"exp":               InstantVectorTransformationFunctionOperatorFactory("exp", functions.Exp),
 	"floor":             InstantVectorTransformationFunctionOperatorFactory("floor", functions.Floor),
-	"histogram_count":   InstantVectorTransformationFunctionOperatorFactory("histogram_count", functions.HistogramCount),
-	"histogram_sum":     InstantVectorTransformationFunctionOperatorFactory("histogram_sum", functions.HistogramSum),
+	"histogram_count":   InstantVectorTransformationFunctionOperatorFactory("histogram_count", &functions.HistogramCountFunction{}),
+	"histogram_sum":     InstantVectorTransformationFunctionOperatorFactory("histogram_sum", &functions.HistogramSumFunction{}),
 	"increase":          FunctionOverRangeVectorOperatorFactory("increase", functions.Increase),
 	"label_replace":     LabelReplaceFunctionOperatorFactory(),
 	"last_over_time":    FunctionOverRangeVectorOperatorFactory("last_over_time", functions.LastOverTime),
@@ -282,7 +323,7 @@ func instantVectorToScalarOperatorFactory(args []types.Operator, memoryConsumpti
 
 func unaryNegationOfInstantVectorOperatorFactory(inner types.InstantVectorOperator, memoryConsumptionTracker *limiting.MemoryConsumptionTracker, expressionPosition posrange.PositionRange) types.InstantVectorOperator {
 	f := functions.FunctionOverInstantVector{
-		SeriesDataFunc:         functions.UnaryNegation,
+		SeriesDataFunc:         &functions.UnaryNegationFunction{},
 		SeriesMetadataFunction: functions.DropSeriesName,
 	}
 

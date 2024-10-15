@@ -13,7 +13,9 @@ import (
 	"github.com/grafana/mimir/pkg/streamingpromql/types"
 )
 
-func HistogramCount(seriesData types.InstantVectorSeriesData, memoryConsumptionTracker *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
+type HistogramCountFunction struct{}
+
+func (f *HistogramCountFunction) Func(seriesData types.InstantVectorSeriesData, memoryConsumptionTracker *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
 	floats, err := types.FPointSlicePool.Get(len(seriesData.Histograms), memoryConsumptionTracker)
 	if err != nil {
 		return types.InstantVectorSeriesData{}, err
@@ -35,7 +37,12 @@ func HistogramCount(seriesData types.InstantVectorSeriesData, memoryConsumptionT
 	return data, nil
 }
 
-func HistogramSum(seriesData types.InstantVectorSeriesData, memoryConsumptionTracker *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
+func (f *HistogramCountFunction) Close() {
+}
+
+type HistogramSumFunction struct{}
+
+func (f *HistogramSumFunction) Func(seriesData types.InstantVectorSeriesData, memoryConsumptionTracker *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
 	floats, err := types.FPointSlicePool.Get(len(seriesData.Histograms), memoryConsumptionTracker)
 	if err != nil {
 		return types.InstantVectorSeriesData{}, err
@@ -55,6 +62,9 @@ func HistogramSum(seriesData types.InstantVectorSeriesData, memoryConsumptionTra
 	types.PutInstantVectorSeriesData(seriesData, memoryConsumptionTracker)
 
 	return data, nil
+}
+
+func (f *HistogramSumFunction) Close() {
 }
 
 func NativeHistogramErrorToAnnotation(err error, emitAnnotation EmitAnnotationFunc) error {

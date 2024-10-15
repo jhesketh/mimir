@@ -3,42 +3,43 @@
 package functions
 
 import (
+	"context"
 	"math"
 
 	"github.com/grafana/mimir/pkg/streamingpromql/limiting"
 	"github.com/grafana/mimir/pkg/streamingpromql/types"
 )
 
-var Abs = FloatTransformationDropHistogramsFunc(math.Abs)
-var Acos = FloatTransformationDropHistogramsFunc(math.Acos)
-var Acosh = FloatTransformationDropHistogramsFunc(math.Acosh)
-var Asin = FloatTransformationDropHistogramsFunc(math.Asin)
-var Asinh = FloatTransformationDropHistogramsFunc(math.Asinh)
-var Atan = FloatTransformationDropHistogramsFunc(math.Atan)
-var Atanh = FloatTransformationDropHistogramsFunc(math.Atanh)
-var Ceil = FloatTransformationDropHistogramsFunc(math.Ceil)
-var Cos = FloatTransformationDropHistogramsFunc(math.Cos)
-var Cosh = FloatTransformationDropHistogramsFunc(math.Cosh)
-var Exp = FloatTransformationDropHistogramsFunc(math.Exp)
-var Floor = FloatTransformationDropHistogramsFunc(math.Floor)
-var Ln = FloatTransformationDropHistogramsFunc(math.Log)
-var Log10 = FloatTransformationDropHistogramsFunc(math.Log10)
-var Log2 = FloatTransformationDropHistogramsFunc(math.Log2)
-var Sin = FloatTransformationDropHistogramsFunc(math.Sin)
-var Sinh = FloatTransformationDropHistogramsFunc(math.Sinh)
-var Sqrt = FloatTransformationDropHistogramsFunc(math.Sqrt)
-var Tan = FloatTransformationDropHistogramsFunc(math.Tan)
-var Tanh = FloatTransformationDropHistogramsFunc(math.Tanh)
+var Abs = NewFloatTransformationDropHistogramsFunction(math.Abs)
+var Acos = NewFloatTransformationDropHistogramsFunction(math.Acos)
+var Acosh = NewFloatTransformationDropHistogramsFunction(math.Acosh)
+var Asin = NewFloatTransformationDropHistogramsFunction(math.Asin)
+var Asinh = NewFloatTransformationDropHistogramsFunction(math.Asinh)
+var Atan = NewFloatTransformationDropHistogramsFunction(math.Atan)
+var Atanh = NewFloatTransformationDropHistogramsFunction(math.Atanh)
+var Ceil = NewFloatTransformationDropHistogramsFunction(math.Ceil)
+var Cos = NewFloatTransformationDropHistogramsFunction(math.Cos)
+var Cosh = NewFloatTransformationDropHistogramsFunction(math.Cosh)
+var Exp = NewFloatTransformationDropHistogramsFunction(math.Exp)
+var Floor = NewFloatTransformationDropHistogramsFunction(math.Floor)
+var Ln = NewFloatTransformationDropHistogramsFunction(math.Log)
+var Log10 = NewFloatTransformationDropHistogramsFunction(math.Log10)
+var Log2 = NewFloatTransformationDropHistogramsFunction(math.Log2)
+var Sin = NewFloatTransformationDropHistogramsFunction(math.Sin)
+var Sinh = NewFloatTransformationDropHistogramsFunction(math.Sinh)
+var Sqrt = NewFloatTransformationDropHistogramsFunction(math.Sqrt)
+var Tan = NewFloatTransformationDropHistogramsFunction(math.Tan)
+var Tanh = NewFloatTransformationDropHistogramsFunction(math.Tanh)
 
-var Deg = FloatTransformationDropHistogramsFunc(func(f float64) float64 {
+var Deg = NewFloatTransformationDropHistogramsFunction(func(f float64) float64 {
 	return f * 180 / math.Pi
 })
 
-var Rad = FloatTransformationDropHistogramsFunc(func(f float64) float64 {
+var Rad = NewFloatTransformationDropHistogramsFunction(func(f float64) float64 {
 	return f * math.Pi / 180
 })
 
-var Sgn = FloatTransformationDropHistogramsFunc(func(f float64) float64 {
+var Sgn = NewFloatTransformationDropHistogramsFunction(func(f float64) float64 {
 	if f < 0 {
 		return -1
 	}
@@ -52,7 +53,9 @@ var Sgn = FloatTransformationDropHistogramsFunc(func(f float64) float64 {
 	return f
 })
 
-var UnaryNegation InstantVectorSeriesFunction = func(seriesData types.InstantVectorSeriesData, _ *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
+type UnaryNegationFunction struct{}
+
+func (f *UnaryNegationFunction) Func(seriesData types.InstantVectorSeriesData, _ *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
 	for i := range seriesData.Floats {
 		seriesData.Floats[i].F = -seriesData.Floats[i].F
 	}
@@ -62,4 +65,46 @@ var UnaryNegation InstantVectorSeriesFunction = func(seriesData types.InstantVec
 	}
 
 	return seriesData, nil
+}
+
+func (f *UnaryNegationFunction) Close() {
+}
+
+type ClampFunction struct {
+	minValues                types.ScalarData
+	maxValues                types.ScalarData
+	memoryConsumptionTracker *limiting.MemoryConsumptionTracker
+}
+
+func NewClampFunction(memoryConsumptionTracker *limiting.MemoryConsumptionTracker, min, max types.ScalarOperator) (*ClampFunction, error) {
+	ctx := context.Background()
+	minValues, err := min.GetValues(ctx)
+	if err != nil {
+		return nil, err
+	}
+	maxValues, err := max.GetValues(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &ClampFunction{
+		minValues:                minValues,
+		maxValues:                maxValues,
+		memoryConsumptionTracker: memoryConsumptionTracker,
+	}, nil
+}
+
+func (f *ClampFunction) Func(seriesData types.InstantVectorSeriesData, _ *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
+	for step, data := range seriesData.Floats {
+		minVal := f.minValues.Samples[step].F
+		maxVal := f.maxValues.Samples[step].F
+		// We reuse the existing FPoint slice in place
+		seriesData.Floats[step].F = math.Max(minVal, math.Min(maxVal, data.F))
+	}
+
+	return seriesData, nil
+}
+
+func (f *ClampFunction) Close() {
+	types.FPointSlicePool.Put(f.minValues.Samples, f.memoryConsumptionTracker)
+	types.FPointSlicePool.Put(f.maxValues.Samples, f.memoryConsumptionTracker)
 }

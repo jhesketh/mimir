@@ -10,47 +10,17 @@ import (
 	"github.com/grafana/mimir/pkg/streamingpromql/types"
 )
 
-// SeriesMetadataFunction is a function to operate on the metadata across series.
-type SeriesMetadataFunction func(seriesMetadata []types.SeriesMetadata, memoryConsumptionTracker *limiting.MemoryConsumptionTracker) ([]types.SeriesMetadata, error)
+type SeriesMetadataFunctionDefinition struct {
+	// Func is the function that computes the output series for this function based on the given input series.
+	//
+	// If Func is nil, the input series are used as-is.
+	Func SeriesMetadataFunction
 
-// DropSeriesName is a series metadata function that removes the __name__ label from all series.
-var DropSeriesName = SeriesMetadataFunctionDefinition{
-	Func: func(seriesMetadata []types.SeriesMetadata, _ *limiting.MemoryConsumptionTracker) ([]types.SeriesMetadata, error) {
-		for i := range seriesMetadata {
-			seriesMetadata[i].Labels = seriesMetadata[i].Labels.DropMetricName()
-		}
-
-		return seriesMetadata, nil
-	},
-	NeedsSeriesDeduplication: true,
-}
-
-// InstantVectorSeriesFunction is a function that takes in an instant vector and produces an instant vector.
-type InstantVectorSeriesFunction func(seriesData types.InstantVectorSeriesData, memoryConsumptionTracker *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error)
-
-// floatTransformationFunc is not needed elsewhere, so it is not exported yet
-func floatTransformationFunc(transform func(f float64) float64) InstantVectorSeriesFunction {
-	return func(seriesData types.InstantVectorSeriesData, _ *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
-		for i := range seriesData.Floats {
-			seriesData.Floats[i].F = transform(seriesData.Floats[i].F)
-		}
-		return seriesData, nil
-	}
-}
-
-func FloatTransformationDropHistogramsFunc(transform func(f float64) float64) InstantVectorSeriesFunction {
-	ft := floatTransformationFunc(transform)
-	return func(seriesData types.InstantVectorSeriesData, memoryConsumptionTracker *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
-		// Functions that do not explicitly mention native histograms in their documentation will ignore histogram samples.
-		// https://prometheus.io/docs/prometheus/latest/querying/functions
-		types.HPointSlicePool.Put(seriesData.Histograms, memoryConsumptionTracker)
-		seriesData.Histograms = nil
-		return ft(seriesData, memoryConsumptionTracker)
-	}
-}
-
-func PassthroughData(seriesData types.InstantVectorSeriesData, _ *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
-	return seriesData, nil
+	// NeedsSeriesDeduplication enables deduplication and merging of output series with the same labels.
+	//
+	// This should be set to true if Func modifies the input series labels in such a way that duplicates may be
+	// present in the output series labels (eg. dropping a label).
+	NeedsSeriesDeduplication bool
 }
 
 // RangeVectorStepFunction is a function that operates on a range vector step.
@@ -90,16 +60,6 @@ type RangeVectorSeriesValidationFunction func(seriesData types.InstantVectorSeri
 // RangeVectorSeriesValidationFunctionFactory is a factory function that returns a RangeVectorSeriesValidationFunction
 type RangeVectorSeriesValidationFunctionFactory func() RangeVectorSeriesValidationFunction
 
-type FunctionOverInstantVector struct {
-	// SeriesDataFunc is the function that computes an output series for a single input series.
-	SeriesDataFunc InstantVectorSeriesFunction
-
-	// SeriesMetadataFunction is the function that computes the output series for this function based on the given input series.
-	//
-	// If SeriesMetadataFunction.Func is nil, the input series are used as-is.
-	SeriesMetadataFunction SeriesMetadataFunctionDefinition
-}
-
 type FunctionOverRangeVector struct {
 	// StepFunc is the function that computes an output sample for a single step.
 	StepFunc RangeVectorStepFunction
@@ -124,15 +84,109 @@ type FunctionOverRangeVector struct {
 	NeedsSeriesNamesForAnnotations bool
 }
 
-type SeriesMetadataFunctionDefinition struct {
-	// Func is the function that computes the output series for this function based on the given input series.
-	//
-	// If Func is nil, the input series are used as-is.
-	Func SeriesMetadataFunction
+type FunctionOverInstantVector struct {
+	// SeriesDataFunc is the function that computes an output series for a single input series.
+	SeriesDataFunc InstantVectorSeriesFunction
 
-	// NeedsSeriesDeduplication enables deduplication and merging of output series with the same labels.
+	// SeriesMetadataFunction is the function that computes the output series for this function based on the given input series.
 	//
-	// This should be set to true if Func modifies the input series labels in such a way that duplicates may be
-	// present in the output series labels (eg. dropping a label).
-	NeedsSeriesDeduplication bool
+	// If SeriesMetadataFunction.Func is nil, the input series are used as-is.
+	SeriesMetadataFunction SeriesMetadataFunctionDefinition
+}
+
+type InstantVectorSeriesFunction interface {
+	// Func is the function that computes an output series for a single input series.
+	Func(seriesData types.InstantVectorSeriesData, memoryConsumptionTracker *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error)
+	Close()
+}
+
+// SeriesMetadataFunction is a function to operate on the metadata across series.
+type SeriesMetadataFunction func(seriesMetadata []types.SeriesMetadata, memoryConsumptionTracker *limiting.MemoryConsumptionTracker) ([]types.SeriesMetadata, error)
+
+// DropSeriesName is a series metadata function that removes the __name__ label from all series.
+var DropSeriesName = SeriesMetadataFunctionDefinition{
+	Func: func(seriesMetadata []types.SeriesMetadata, _ *limiting.MemoryConsumptionTracker) ([]types.SeriesMetadata, error) {
+		for i := range seriesMetadata {
+			seriesMetadata[i].Labels = seriesMetadata[i].Labels.DropMetricName()
+		}
+
+		return seriesMetadata, nil
+	},
+	NeedsSeriesDeduplication: true,
+}
+
+type floatTransformationFunction struct {
+	transform                func(f float64) float64
+	memoryConsumptionTracker *limiting.MemoryConsumptionTracker
+}
+
+func (f *floatTransformationFunction) Func(seriesData types.InstantVectorSeriesData, _ *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
+	for i := range seriesData.Floats {
+		seriesData.Floats[i].F = f.transform(seriesData.Floats[i].F)
+	}
+	return seriesData, nil
+}
+
+func (f *floatTransformationFunction) Close() {}
+
+// floatTransformation is not needed elsewhere, so it is not exported yet
+func NewFloatTransformationFunction(transform func(f float64) float64) InstantVectorSeriesFunction {
+	return &floatTransformationFunction{
+		transform: transform,
+	}
+}
+
+type floatTransformationDropHistogramsFunction struct {
+	transform func(f float64) float64
+}
+
+func (f *floatTransformationDropHistogramsFunction) Func(seriesData types.InstantVectorSeriesData, memoryConsumptionTracker *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
+	// Functions that do not explicitly mention native histograms in their documentation will ignore histogram samples.
+	// https://prometheus.io/docs/prometheus/latest/querying/functions
+	types.HPointSlicePool.Put(seriesData.Histograms, memoryConsumptionTracker)
+	seriesData.Histograms = nil
+
+	for i := range seriesData.Floats {
+		seriesData.Floats[i].F = f.transform(seriesData.Floats[i].F)
+	}
+
+	return seriesData, nil
+}
+
+func (f *floatTransformationDropHistogramsFunction) Close() {}
+
+func NewFloatTransformationDropHistogramsFunction(transform func(f float64) float64) InstantVectorSeriesFunction {
+	return &floatTransformationDropHistogramsFunction{
+		transform: transform,
+	}
+}
+
+type PassthroughFunction struct {
+	transform func(f float64) float64
+}
+
+func (f *PassthroughFunction) Func(seriesData types.InstantVectorSeriesData, _ *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
+	return seriesData, nil
+}
+
+func (f *PassthroughFunction) Close() {}
+
+func NewPassthroughFunction() InstantVectorSeriesFunction {
+	return &PassthroughFunction{}
+}
+
+type PassthroughDropHistogramsFunction struct {
+	transform func(f float64) float64
+}
+
+func (f *PassthroughDropHistogramsFunction) Func(seriesData types.InstantVectorSeriesData, memoryConsumptionTracker *limiting.MemoryConsumptionTracker) (types.InstantVectorSeriesData, error) {
+	types.HPointSlicePool.Put(seriesData.Histograms, memoryConsumptionTracker)
+	seriesData.Histograms = nil
+	return seriesData, nil
+}
+
+func (f *PassthroughDropHistogramsFunction) Close() {}
+
+func NewPassthroughDropHistogramsFunction() InstantVectorSeriesFunction {
+	return &PassthroughDropHistogramsFunction{}
 }
