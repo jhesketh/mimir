@@ -293,9 +293,9 @@ func TestSplitAndCacheMiddleware_ResultsCache(t *testing.T) {
 	}
 
 	downstreamReqs := 0
-	rc := mw.Wrap(HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
+	rc := mw.Wrap(HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
 		downstreamReqs++
-		return expectedResponse, nil
+		return responseWithFinalizer{response: expectedResponse}, nil
 	}))
 
 	step := int64(120 * 1000)
@@ -430,9 +430,9 @@ func TestSplitAndCacheMiddleware_ResultsCacheNoStore(t *testing.T) {
 	}
 
 	downstreamReqs := 0
-	rc := mw.Wrap(HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
+	rc := mw.Wrap(HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
 		downstreamReqs++
-		return expectedResponse, nil
+		return responseWithFinalizer{response: expectedResponse}, nil
 	}))
 
 	step := int64(120 * 1000)
@@ -556,9 +556,9 @@ func TestSplitAndCacheMiddleware_ResultsCache_ShouldNotLookupCacheIfStepIsNotAli
 	}
 
 	downstreamReqs := 0
-	rc := mw.Wrap(HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
+	rc := mw.Wrap(HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
 		downstreamReqs++
-		return expectedResponse, nil
+		return responseWithFinalizer{response: expectedResponse}, nil
 	}))
 
 	req := MetricsQueryRequest(&PrometheusRangeQueryRequest{
@@ -649,9 +649,9 @@ func TestSplitAndCacheMiddleware_ResultsCache_EnabledCachingOfStepUnalignedReque
 	}
 
 	downstreamReqs := 0
-	rc := mw.Wrap(HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
+	rc := mw.Wrap(HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
 		downstreamReqs++
-		return expectedResponse, nil
+		return responseWithFinalizer{response: expectedResponse}, nil
 	}))
 
 	req := MetricsQueryRequest(&PrometheusRangeQueryRequest{
@@ -794,7 +794,7 @@ func TestSplitAndCacheMiddleware_ResultsCache_ShouldNotCacheRequestEarlierThanMa
 			)
 
 			calls := 0
-			rc := mw.Wrap(HandlerFunc(func(_ context.Context, r MetricsQueryRequest) (Response, error) {
+			rc := mw.Wrap(HandlerFunc(func(_ context.Context, r MetricsQueryRequest) (responseWithFinalizer, error) {
 				calls++
 
 				// Check the downstream request. We only check the 1st request because the subsequent
@@ -804,7 +804,7 @@ func TestSplitAndCacheMiddleware_ResultsCache_ShouldNotCacheRequestEarlierThanMa
 					require.Equal(t, testData.expectedDownstreamEndTime.Unix()*1000, r.GetEnd())
 				}
 
-				return testData.downstreamResponse, nil
+				return responseWithFinalizer{response: testData.downstreamResponse}, nil
 			}))
 			ctx := user.InjectOrgID(context.Background(), userID)
 
@@ -967,12 +967,13 @@ func TestSplitAndCacheMiddleware_ResultsCacheFuzzy(t *testing.T) {
 	expectedRes := make(map[int64]Response, len(reqs))
 	require.NoError(t, concurrency.ForEachJob(ctx, len(reqs), len(reqs), func(ctx context.Context, idx int) error {
 		res, err := downstream.Do(ctx, reqs[idx])
+		// ignore any finalizers for this test
 		if err != nil {
 			return err
 		}
 
 		expectedResMx.Lock()
-		expectedRes[reqs[idx].GetID()] = res
+		expectedRes[reqs[idx].GetID()] = res.response
 		expectedResMx.Unlock()
 
 		return nil
@@ -1290,8 +1291,8 @@ func TestSplitAndCacheMiddleware_ResultsCache_ExtentsEdgeCases(t *testing.T) {
 				resultsCacheAlwaysEnabled,
 				log.NewNopLogger(),
 				prometheus.NewPedanticRegistry(),
-			).Wrap(HandlerFunc(func(_ context.Context, req MetricsQueryRequest) (Response, error) {
-				return mkAPIResponse(req.GetStart(), req.GetEnd(), req.GetStep()), nil
+			).Wrap(HandlerFunc(func(_ context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
+				return responseWithFinalizer{response: mkAPIResponse(req.GetStart(), req.GetEnd(), req.GetStep())}, nil
 			})).(*splitAndCacheMiddleware)
 			mw.currentTime = func() time.Time { return time.UnixMilli(now) }
 
@@ -1489,89 +1490,89 @@ func TestSplitRequests_storeDownstreamResponses(t *testing.T) {
 		"should associate downstream responses to requests": {
 			requests: splitRequests{{
 				downstreamRequests:  []MetricsQueryRequest{&PrometheusRangeQueryRequest{start: 1, id: 1}, &PrometheusRangeQueryRequest{start: 2, id: 2}},
-				downstreamResponses: []Response{nil, nil},
+				downstreamResponses: []responseWithFinalizer{responseWithFinalizer{}, responseWithFinalizer{}},
 			}, {
 				downstreamRequests:  []MetricsQueryRequest{},
-				downstreamResponses: []Response{},
+				downstreamResponses: []responseWithFinalizer{},
 			}, {
 				downstreamRequests:  []MetricsQueryRequest{&PrometheusRangeQueryRequest{start: 3, id: 3}},
-				downstreamResponses: []Response{nil},
+				downstreamResponses: []responseWithFinalizer{responseWithFinalizer{}},
 			}},
 			responses: []requestResponse{{
 				Request:  &PrometheusRangeQueryRequest{start: 3, id: 3},
-				Response: &PrometheusResponse{Status: "response-3"},
+				Response: responseWithFinalizer{response: &PrometheusResponse{Status: "response-3"}},
 			}, {
 				Request:  &PrometheusRangeQueryRequest{start: 1, id: 1},
-				Response: &PrometheusResponse{Status: "response-1"},
+				Response: responseWithFinalizer{response: &PrometheusResponse{Status: "response-1"}},
 			}, {
 				Request:  &PrometheusRangeQueryRequest{start: 2, id: 2},
-				Response: &PrometheusResponse{Status: "response-2"},
+				Response: responseWithFinalizer{response: &PrometheusResponse{Status: "response-2"}},
 			}},
 			expected: splitRequests{{
 				downstreamRequests:  []MetricsQueryRequest{&PrometheusRangeQueryRequest{start: 1, id: 1}, &PrometheusRangeQueryRequest{start: 2, id: 2}},
-				downstreamResponses: []Response{&PrometheusResponse{Status: "response-1"}, &PrometheusResponse{Status: "response-2"}},
+				downstreamResponses: []responseWithFinalizer{responseWithFinalizer{response: &PrometheusResponse{Status: "response-1"}}, responseWithFinalizer{response: &PrometheusResponse{Status: "response-2"}}},
 			}, {
 				downstreamRequests:  []MetricsQueryRequest{},
-				downstreamResponses: []Response{},
+				downstreamResponses: []responseWithFinalizer{},
 			}, {
 				downstreamRequests:  []MetricsQueryRequest{&PrometheusRangeQueryRequest{start: 3, id: 3}},
-				downstreamResponses: []Response{&PrometheusResponse{Status: "response-3"}},
+				downstreamResponses: []responseWithFinalizer{responseWithFinalizer{response: &PrometheusResponse{Status: "response-3"}}},
 			}},
 		},
 		"should return error if a downstream response is missing": {
 			requests: splitRequests{{
 				downstreamRequests:  []MetricsQueryRequest{&PrometheusRangeQueryRequest{start: 1, id: 1}, &PrometheusRangeQueryRequest{start: 2, id: 2}},
-				downstreamResponses: []Response{nil, nil},
+				downstreamResponses: []responseWithFinalizer{responseWithFinalizer{}, responseWithFinalizer{}},
 			}, {
 				downstreamRequests:  []MetricsQueryRequest{&PrometheusRangeQueryRequest{start: 3, id: 3}},
-				downstreamResponses: []Response{nil},
+				downstreamResponses: []responseWithFinalizer{responseWithFinalizer{}},
 			}},
 			responses: []requestResponse{{
 				Request:  &PrometheusRangeQueryRequest{start: 3, id: 3},
-				Response: &PrometheusResponse{Status: "response-3"},
+				Response: responseWithFinalizer{response: &PrometheusResponse{Status: "response-3"}},
 			}, {
 				Request:  &PrometheusRangeQueryRequest{start: 2, id: 2},
-				Response: &PrometheusResponse{Status: "response-2"},
+				Response: responseWithFinalizer{response: &PrometheusResponse{Status: "response-2"}},
 			}},
 			expectedErr: "consistency check failed: missing downstream response",
 		},
 		"should return error if multiple downstream responses have the same ID": {
 			requests: splitRequests{{
 				downstreamRequests:  []MetricsQueryRequest{&PrometheusRangeQueryRequest{start: 1, id: 1}, &PrometheusRangeQueryRequest{start: 2, id: 2}},
-				downstreamResponses: []Response{nil, nil},
+				downstreamResponses: []responseWithFinalizer{responseWithFinalizer{}, responseWithFinalizer{}},
 			}, {
 				downstreamRequests:  []MetricsQueryRequest{&PrometheusRangeQueryRequest{start: 3, id: 3}},
-				downstreamResponses: []Response{nil},
+				downstreamResponses: []responseWithFinalizer{responseWithFinalizer{}},
 			}},
 			responses: []requestResponse{{
 				Request:  &PrometheusRangeQueryRequest{start: 3, id: 3},
-				Response: &PrometheusResponse{Status: "response-3"},
+				Response: responseWithFinalizer{response: &PrometheusResponse{Status: "response-3"}},
 			}, {
 				Request:  &PrometheusRangeQueryRequest{start: 2, id: 3},
-				Response: &PrometheusResponse{Status: "response-2"},
+				Response: responseWithFinalizer{response: &PrometheusResponse{Status: "response-2"}},
 			}},
 			expectedErr: "consistency check failed: conflicting downstream request ID",
 		},
 		"should return error if extra downstream responses are requested to be stored": {
 			requests: splitRequests{{
 				downstreamRequests:  []MetricsQueryRequest{&PrometheusRangeQueryRequest{start: 1, id: 1}, &PrometheusRangeQueryRequest{start: 2, id: 2}},
-				downstreamResponses: []Response{nil, nil},
+				downstreamResponses: []responseWithFinalizer{responseWithFinalizer{}, responseWithFinalizer{}},
 			}, {
 				downstreamRequests:  []MetricsQueryRequest{&PrometheusRangeQueryRequest{start: 3, id: 3}},
-				downstreamResponses: []Response{nil},
+				downstreamResponses: []responseWithFinalizer{responseWithFinalizer{}},
 			}},
 			responses: []requestResponse{{
 				Request:  &PrometheusRangeQueryRequest{start: 3, id: 3},
-				Response: &PrometheusResponse{Status: "response-3"},
+				Response: responseWithFinalizer{response: &PrometheusResponse{Status: "response-3"}},
 			}, {
 				Request:  &PrometheusRangeQueryRequest{start: 2, id: 2},
-				Response: &PrometheusResponse{Status: "response-2"},
+				Response: responseWithFinalizer{response: &PrometheusResponse{Status: "response-2"}},
 			}, {
 				Request:  &PrometheusRangeQueryRequest{start: 1, id: 1},
-				Response: &PrometheusResponse{Status: "response-1"},
+				Response: responseWithFinalizer{response: &PrometheusResponse{Status: "response-1"}},
 			}, {
 				Request:  &PrometheusRangeQueryRequest{start: 4, id: 4},
-				Response: &PrometheusResponse{Status: "response-4"},
+				Response: responseWithFinalizer{response: &PrometheusResponse{Status: "response-4"}},
 			}},
 			expectedErr: "consistency check failed: received more responses than expected (expected: 3, got: 4)",
 		},
@@ -1661,7 +1662,7 @@ type assertHintsMiddleware struct {
 	expected *Hints
 }
 
-func (m *assertHintsMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (Response, error) {
+func (m *assertHintsMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 	assert.Equal(m.t, m.expected, req.GetHints())
 	return m.next.Do(ctx, req)
 }
@@ -1699,7 +1700,11 @@ func (q roundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 
-	return q.codec.EncodeMetricsQueryResponse(r.Context(), r, response)
+	if response.finalizer != nil {
+		defer response.finalizer()
+	}
+
+	return q.codec.EncodeMetricsQueryResponse(r.Context(), r, response.response)
 }
 
 const seconds = 1e3 // 1e3 milliseconds per second.

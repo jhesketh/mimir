@@ -58,7 +58,7 @@ func newQueryStatsMiddleware(reg prometheus.Registerer, engine *promql.Engine) M
 	})
 }
 
-func (s queryStatsMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (Response, error) {
+func (s queryStatsMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 	if !isRequestStepAligned(req) {
 		s.nonAlignedQueries.Inc()
 	}

@@ -43,46 +43,46 @@ func TestRetry(t *testing.T) {
 		{
 			name:            "retry failures",
 			expectedRetries: 4,
-			handler: HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
+			handler: HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
 				if try.Inc() == 5 {
-					return &PrometheusResponse{Status: "Hello World"}, nil
+					return responseWithFinalizer{response: &PrometheusResponse{Status: "Hello World"}}, nil
 				}
-				return nil, fmt.Errorf("fail")
+				return responseWithFinalizer{}, fmt.Errorf("fail")
 			}),
 			resp: &PrometheusResponse{Status: "Hello World"},
 		},
 		{
 			name:            "don't retry 400s",
 			expectedRetries: 0,
-			handler: HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
-				return nil, errBadRequest
+			handler: HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
+				return responseWithFinalizer{}, errBadRequest
 			}),
 			err: errBadRequest,
 		},
 		{
 			name:            "don't retry bad-data",
 			expectedRetries: 0,
-			handler: HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
-				return nil, errUnprocessable
+			handler: HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
+				return responseWithFinalizer{}, errUnprocessable
 			}),
 			err: errUnprocessable,
 		},
 		{
 			name:            "retry 500s",
 			expectedRetries: 5,
-			handler: HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
-				return nil, errInternal
+			handler: HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
+				return responseWithFinalizer{}, errInternal
 			}),
 			err: errInternal,
 		},
 		{
 			name:            "last error",
 			expectedRetries: 4,
-			handler: HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
+			handler: HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
 				if try.Inc() == 5 {
-					return nil, errBadRequest
+					return responseWithFinalizer{}, errBadRequest
 				}
-				return nil, errInternal
+				return responseWithFinalizer{}, errInternal
 			}),
 			err: errBadRequest,
 		},
@@ -112,9 +112,9 @@ func Test_RetryMiddlewareCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := newRetryMiddleware(log.NewNopLogger(), 5, nil).Wrap(
-		HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
+		HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
 			try.Inc()
-			return nil, ctx.Err()
+			return responseWithFinalizer{}, ctx.Err()
 		}),
 	).Do(ctx, nil)
 	require.Equal(t, int32(0), try.Load())
@@ -122,10 +122,10 @@ func Test_RetryMiddlewareCancel(t *testing.T) {
 
 	ctx, cancel = context.WithCancel(context.Background())
 	_, err = newRetryMiddleware(log.NewNopLogger(), 5, nil).Wrap(
-		HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
+		HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
 			try.Inc()
 			cancel()
-			return nil, errors.New("failed")
+			return responseWithFinalizer{}, errors.New("failed")
 		}),
 	).Do(ctx, nil)
 	require.Equal(t, int32(1), try.Load())

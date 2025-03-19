@@ -251,9 +251,9 @@ type mockNextHandler struct {
 	shouldContinue bool
 }
 
-func (h *mockNextHandler) Do(_ context.Context, _ MetricsQueryRequest) (Response, error) {
+func (h *mockNextHandler) Do(_ context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
 	if !h.shouldContinue {
 		h.t.Error("The next middleware should not be called.")
 	}
-	return nil, nil
+	return responseWithFinalizer{}, nil
 }

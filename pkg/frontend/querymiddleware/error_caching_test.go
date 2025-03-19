@@ -31,7 +31,7 @@ func TestErrorCachingHandler_Do(t *testing.T) {
 		}
 	}
 
-	runHandler := func(ctx context.Context, inner MetricsQueryHandler, c cache.Cache, req MetricsQueryRequest) (Response, error) {
+	runHandler := func(ctx context.Context, inner MetricsQueryHandler, c cache.Cache, req MetricsQueryRequest) (responseWithFinalizer, error) {
 		limits := &mockLimits{resultsCacheTTLForErrors: time.Minute}
 		middleware := newErrorCachingMiddleware(c, limits, resultsCacheEnabledByOption, keyGen, test.NewTestingLogger(t), prometheus.NewPedanticRegistry())
 		handler := middleware.Wrap(inner)

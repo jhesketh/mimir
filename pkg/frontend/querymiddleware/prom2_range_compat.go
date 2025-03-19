@@ -42,7 +42,7 @@ type prom2RangeCompatHandler struct {
 	rewritten *prometheus.CounterVec
 }
 
-func (c *prom2RangeCompatHandler) Do(ctx context.Context, r MetricsQueryRequest) (Response, error) {
+func (c *prom2RangeCompatHandler) Do(ctx context.Context, r MetricsQueryRequest) (responseWithFinalizer, error) {
 	spanLog := spanlogger.FromContext(ctx, c.logger)
 	tenantIDs, err := tenant.TenantIDs(ctx)
 	if err != nil {

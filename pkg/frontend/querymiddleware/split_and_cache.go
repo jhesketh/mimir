@@ -134,18 +134,18 @@ func newSplitAndCacheMiddleware(
 	})
 }
 
-func (s *splitAndCacheMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (Response, error) {
+func (s *splitAndCacheMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 	spanLog := spanlogger.FromContext(ctx, s.logger)
 	tenantIDs, err := tenant.TenantIDs(ctx)
 	if err != nil {
-		return nil, apierror.New(apierror.TypeBadData, err.Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, err.Error())
 	}
 
 	// Split the input requests by the configured interval (eg. day).
 	// Returns the input request if splitting is disabled.
 	splitReqs, err := s.splitRequestByInterval(req)
 	if err != nil {
-		return nil, err
+		return responseWithFinalizer{}, err
 	}
 
 	isCacheEnabled := s.cacheEnabled && (s.shouldCacheReq == nil || s.shouldCacheReq(req))
@@ -189,14 +189,14 @@ func (s *splitAndCacheMiddleware) Do(ctx context.Context, req MetricsQueryReques
 			// to generate the queries for the missing parts.
 			requests, responses, err := partitionCacheExtents(lookupReqs[lookupIdx].orig, extents, defaultMinCacheExtent, s.extractor)
 			if err != nil {
-				return nil, err
+				return responseWithFinalizer{}, err
 			}
 
 			if len(requests) == 0 {
 				// The full response has been picked up from the cache so we can merge it and store it.
 				response, err := s.merger.MergeResponse(responses...)
 				if err != nil {
-					return nil, err
+					return responseWithFinalizer{}, err
 				}
 
 				lookupReqs[lookupIdx].cachedResponses = []Response{response}
@@ -217,7 +217,7 @@ func (s *splitAndCacheMiddleware) Do(ctx context.Context, req MetricsQueryReques
 	// Prepare and execute the downstream requests.
 	execReqs, err := splitReqs.prepareDownstreamRequests()
 	if err != nil {
-		return nil, err
+		return responseWithFinalizer{}, err
 	}
 
 	// Update query stats.
@@ -230,12 +230,12 @@ func (s *splitAndCacheMiddleware) Do(ctx context.Context, req MetricsQueryReques
 	if len(execReqs) > 0 {
 		execResps, err := doRequests(ctx, s.next, execReqs)
 		if err != nil {
-			return nil, err
+			return responseWithFinalizer{}, err
 		}
 
 		// Store the downstream responses in our internal data structure.
 		if err := splitReqs.storeDownstreamResponses(execResps); err != nil {
-			return nil, err
+			return responseWithFinalizer{}, err
 		}
 
 		if details := QueryDetailsFromContext(ctx); details != nil {
@@ -262,13 +262,13 @@ func (s *splitAndCacheMiddleware) Do(ctx context.Context, req MetricsQueryReques
 
 			for downstreamIdx, downstreamReq := range splitReq.downstreamRequests {
 				downstreamRes := splitReq.downstreamResponses[downstreamIdx]
-				if !isResponseCachable(downstreamRes) {
+				if !isResponseCachable(downstreamRes.response) {
 					continue
 				}
 
-				extent, err := toExtent(ctx, downstreamReq, s.extractor.ResponseWithoutHeaders(downstreamRes), queryTime)
+				extent, err := toExtent(ctx, downstreamReq, s.extractor.ResponseWithoutHeaders(downstreamRes.response), queryTime)
 				if err != nil {
-					return nil, err
+					return responseWithFinalizer{}, err
 				}
 
 				updatedExtents = append(updatedExtents, extent)
@@ -281,14 +281,14 @@ func (s *splitAndCacheMiddleware) Do(ctx context.Context, req MetricsQueryReques
 
 			mergedExtents, err := mergeCacheExtentsForRequest(ctx, splitReq.orig, s.merger, updatedExtents)
 			if err != nil {
-				return nil, err
+				return responseWithFinalizer{}, err
 			}
 
 			// Filter out recent extents from merged ones.
 			// TODO(codesome): make filterRecentCacheExtents break it into 2 sets, one to cache with lower TTL and one with the usual TTL.
 			filteredExtents, err := filterRecentCacheExtents(splitReq.orig, maxCacheFreshness, s.extractor, mergedExtents)
 			if err != nil {
-				return nil, err
+				return responseWithFinalizer{}, err
 			}
 
 			// Put back into the cache the filtered ones.
@@ -301,10 +301,23 @@ func (s *splitAndCacheMiddleware) Do(ctx context.Context, req MetricsQueryReques
 	responses := make([]Response, 0, splitReqs.countDownstreamRequests()+splitReqs.countCachedResponses())
 	for _, splitReq := range splitReqs {
 		responses = append(responses, splitReq.cachedResponses...)
-		responses = append(responses, splitReq.downstreamResponses...)
+		for _, resp := range splitReq.downstreamResponses {
+			responses = append(responses, resp.response)
+		}
 	}
 
-	return s.merger.MergeResponse(responses...)
+	finalizer := func() {
+		for _, splitReq := range splitReqs {
+			for _, resp := range splitReq.downstreamResponses {
+				if resp.finalizer != nil {
+					resp.finalizer()
+				}
+			}
+		}
+	}
+
+	response, err := s.merger.MergeResponse(responses...)
+	return responseWithFinalizer{response: response, finalizer: finalizer}, err
 }
 
 // splitRequestByInterval splits the given MetricsQueryRequest by configured interval. Returns the input request if splitting is disabled.
@@ -485,7 +498,7 @@ type splitRequest struct {
 	// The requests/responses we send/receive to/from downstream. For a given request, its
 	// response is stored at the same index.
 	downstreamRequests  []MetricsQueryRequest
-	downstreamResponses []Response
+	downstreamResponses []responseWithFinalizer
 }
 
 // splitRequests holds a list of splitRequest.
@@ -514,7 +527,7 @@ func (s *splitRequests) countDownstreamResponseBytes() int {
 	bytes := 0
 	for _, req := range *s {
 		for _, resp := range req.downstreamResponses {
-			bytes += proto.Size(resp)
+			bytes += proto.Size(resp.response)
 		}
 	}
 	return bytes
@@ -551,7 +564,7 @@ func (s *splitRequests) prepareDownstreamRequests() ([]MetricsQueryRequest, erro
 		}
 
 		execReqs = append(execReqs, splitReq.downstreamRequests...)
-		splitReq.downstreamResponses = make([]Response, len(splitReq.downstreamRequests))
+		splitReq.downstreamResponses = make([]responseWithFinalizer, len(splitReq.downstreamRequests))
 	}
 
 	return execReqs, nil
@@ -561,7 +574,7 @@ func (s *splitRequests) prepareDownstreamRequests() ([]MetricsQueryRequest, erro
 // and stores the associated downstream responses for each request. If returns no error, then it's guaranteed
 // that any downstream request got its response associated.
 func (s *splitRequests) storeDownstreamResponses(responses []requestResponse) error {
-	execRespsByID := make(map[int64]Response, len(responses))
+	execRespsByID := make(map[int64]responseWithFinalizer, len(responses))
 
 	// Map responses by (unique) request IDs.
 	for _, resp := range responses {
@@ -600,7 +613,7 @@ func (s *splitRequests) storeDownstreamResponses(responses []requestResponse) er
 // requestResponse contains a request response and the respective request that was used.
 type requestResponse struct {
 	Request  MetricsQueryRequest
-	Response Response
+	Response responseWithFinalizer
 }
 
 // doRequests executes a list of requests in parallel.

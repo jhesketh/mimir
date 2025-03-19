@@ -86,10 +86,13 @@ func (q *spinOffSubqueriesQuerier) Select(ctx context.Context, _ bool, hints *st
 		}
 
 		resp, err := q.handler.Do(ctx, downstreamReq)
+		if resp.finalizer != nil {
+			defer resp.finalizer()
+		}
 		if err != nil {
 			return storage.ErrSeriesSet(err)
 		}
-		promRes, ok := resp.(*PrometheusResponse)
+		promRes, ok := resp.response.(*PrometheusResponse)
 		if !ok {
 			return storage.ErrSeriesSet(errors.Errorf("error invalid response type: %T, expected: %T", resp, &PrometheusResponse{}))
 		}
@@ -176,10 +179,13 @@ func (q *spinOffSubqueriesQuerier) Select(ctx context.Context, _ bool, hints *st
 		sets := make([]storage.SeriesSet, len(rangeQueries))
 		for idx, req := range rangeQueries {
 			resp, err := q.rangeHandler.Do(ctx, req)
+			if resp.finalizer != nil {
+				defer resp.finalizer()
+			}
 			if err != nil {
 				return storage.ErrSeriesSet(fmt.Errorf("error running subquery: %w", err))
 			}
-			promRes, ok := resp.(*PrometheusResponse)
+			promRes, ok := resp.response.(*PrometheusResponse)
 			if !ok {
 				return storage.ErrSeriesSet(errors.Errorf("error invalid response type: %T, expected: %T", resp, &PrometheusResponse{}))
 			}

@@ -132,14 +132,14 @@ func Test_cardinalityEstimation_Do(t *testing.T) {
 		queryExpr: parseQuery(t, "up"),
 	}
 	addSeriesHandler := func(estimate, actual uint64) HandlerFunc {
-		return func(ctx context.Context, request MetricsQueryRequest) (Response, error) {
+		return func(ctx context.Context, request MetricsQueryRequest) (responseWithFinalizer, error) {
 			require.NotNil(t, request.GetHints())
 			request.GetHints().GetCardinalityEstimate()
 			require.Equal(t, request.GetHints().GetEstimatedSeriesCount(), estimate)
 
 			queryStats := stats.FromContext(ctx)
 			queryStats.AddFetchedSeries(actual)
-			return &PrometheusResponse{}, nil
+			return responseWithFinalizer{response: &PrometheusResponse{}}, nil
 		}
 	}
 	marshaledEstimate, err := proto.Marshal(&QueryStatistics{EstimatedSeriesCount: numSeries})
@@ -157,8 +157,8 @@ func Test_cardinalityEstimation_Do(t *testing.T) {
 		{
 			name:     "no tenantID",
 			tenantID: "",
-			downstreamHandler: func(_ context.Context, _ MetricsQueryRequest) (Response, error) {
-				return &PrometheusResponse{}, nil
+			downstreamHandler: func(_ context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
+				return responseWithFinalizer{response: &PrometheusResponse{}}, nil
 			},
 			expectedLoads:  0,
 			expectedStores: 0,
@@ -167,8 +167,8 @@ func Test_cardinalityEstimation_Do(t *testing.T) {
 		{
 			name:     "downstream error",
 			tenantID: "1",
-			downstreamHandler: func(_ context.Context, _ MetricsQueryRequest) (Response, error) {
-				return nil, errors.New("test error")
+			downstreamHandler: func(_ context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
+				return responseWithFinalizer{}, errors.New("test error")
 			},
 			expectedLoads:  1,
 			expectedStores: 0,
@@ -204,10 +204,10 @@ func Test_cardinalityEstimation_Do(t *testing.T) {
 		{
 			name:     "with empty cache",
 			tenantID: "1",
-			downstreamHandler: func(ctx context.Context, _ MetricsQueryRequest) (Response, error) {
+			downstreamHandler: func(ctx context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
 				queryStats := stats.FromContext(ctx)
 				queryStats.AddFetchedSeries(numSeries)
-				return &PrometheusResponse{}, nil
+				return responseWithFinalizer{response: &PrometheusResponse{}}, nil
 			},
 			expectedLoads:  1,
 			expectedStores: 1,

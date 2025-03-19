@@ -126,13 +126,18 @@ func defaultHandleEmbeddedQueryFunc(ctx context.Context, queryExpr astmapper.Emb
 		return nil, nil, err
 	}
 
-	promRes, ok := resp.(*PrometheusResponse)
+	promRes, ok := resp.response.(*PrometheusResponse)
 	if !ok {
 		return nil, nil, errors.Errorf("error invalid response type: %T, expected: %T", resp, &PrometheusResponse{})
 	}
 	resStreams, err := ResponseToSamples(promRes)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// Todo check this is correct position
+	if resp.finalizer != nil {
+		resp.finalizer()
 	}
 
 	return resStreams, promRes, nil

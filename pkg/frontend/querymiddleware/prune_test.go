@@ -70,8 +70,8 @@ func TestQueryPruning(t *testing.T) {
 
 			if !template.IsEmpty {
 				// Ensure the query produces some results.
-				require.NotEmpty(t, expectedRes.(*PrometheusResponse).Data.Result)
-				requireValidSamples(t, expectedRes.(*PrometheusResponse).Data.Result)
+				require.NotEmpty(t, expectedRes.response.(*PrometheusResponse).Data.Result)
+				requireValidSamples(t, expectedRes.response.(*PrometheusResponse).Data.Result)
 			}
 
 			// Run the query with pruning.
@@ -80,12 +80,12 @@ func TestQueryPruning(t *testing.T) {
 
 			if !template.IsEmpty {
 				// Ensure the query produces some results.
-				require.NotEmpty(t, prunedRes.(*PrometheusResponse).Data.Result)
-				requireValidSamples(t, prunedRes.(*PrometheusResponse).Data.Result)
+				require.NotEmpty(t, prunedRes.response.(*PrometheusResponse).Data.Result)
+				requireValidSamples(t, prunedRes.response.(*PrometheusResponse).Data.Result)
 			}
 
 			// Ensure the results are approximately equal.
-			approximatelyEqualsSamples(t, expectedRes.(*PrometheusResponse), prunedRes.(*PrometheusResponse))
+			approximatelyEqualsSamples(t, expectedRes.response.(*PrometheusResponse), prunedRes.response.(*PrometheusResponse))
 		})
 	}
 }

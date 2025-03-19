@@ -59,9 +59,9 @@ func TestShardedQuerier_Select(t *testing.T) {
 
 				// override handler func to assert new query has been substituted
 				q.handler = HandlerFunc(
-					func(_ context.Context, req MetricsQueryRequest) (Response, error) {
+					func(_ context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 						require.Equal(t, `http_requests_total{cluster="prod"}`, req.GetQuery())
-						return expected, nil
+						return responseWithFinalizer{response: expected}, nil
 					},
 				)
 
@@ -223,12 +223,12 @@ func TestShardedQuerier_Select_ShouldConcurrentlyRunEmbeddedQueries(t *testing.T
 	downstreamWg := sync.WaitGroup{}
 	downstreamWg.Add(len(embeddedQueries))
 
-	querier := mkShardedQuerier(HandlerFunc(func(context.Context, MetricsQueryRequest) (Response, error) {
+	querier := mkShardedQuerier(HandlerFunc(func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error) {
 		// Wait until the downstream handler has been concurrently called for each embedded query.
 		downstreamWg.Done()
 		downstreamWg.Wait()
 
-		return &PrometheusResponse{
+		return responseWithFinalizer{response: &PrometheusResponse{
 			Data: &PrometheusData{
 				ResultType: string(parser.ValueTypeVector),
 				Result: []SampleStream{{
@@ -236,7 +236,7 @@ func TestShardedQuerier_Select_ShouldConcurrentlyRunEmbeddedQueries(t *testing.T
 					Samples: []mimirpb.Sample{{Value: 1, TimestampMs: 1}},
 				}},
 			},
-		}, nil
+		}}, nil
 	}))
 
 	encodedQueries, err := astmapper.JSONCodec.Encode(embeddedQueries)

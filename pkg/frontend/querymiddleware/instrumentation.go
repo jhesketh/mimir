@@ -41,8 +41,8 @@ func newInstrumentMiddleware(name string, metrics *instrumentMiddlewareMetrics) 
 	})
 }
 
-func (h *instrumentMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (Response, error) {
-	var resp Response
+func (h *instrumentMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
+	var resp responseWithFinalizer
 	err := instrument.CollectedRequest(ctx, h.name, h.durationCol, instrument.ErrorCode, func(ctx context.Context) error {
 		sp := opentracing.SpanFromContext(ctx)
 		if sp != nil {

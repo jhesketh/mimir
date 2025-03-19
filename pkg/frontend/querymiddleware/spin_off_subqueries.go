@@ -114,7 +114,7 @@ func newSpinOffSubqueriesMiddleware(
 	})
 }
 
-func (s *spinOffSubqueriesMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (Response, error) {
+func (s *spinOffSubqueriesMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 	// Log the instant query and its timestamp in every error log, so that we have more information for debugging failures.
 	logger := log.With(s.logger, "query", req.GetQuery(), "query_timestamp", req.GetStart())
 
@@ -125,7 +125,7 @@ func (s *spinOffSubqueriesMiddleware) Do(ctx context.Context, req MetricsQueryRe
 	// So we check that the given query is allowed to be spun off
 	tenantIDs, err := tenant.TenantIDs(ctx)
 	if err != nil {
-		return nil, apierror.New(apierror.TypeBadData, err.Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, err.Error())
 	}
 
 	matched := false
@@ -135,7 +135,7 @@ func (s *spinOffSubqueriesMiddleware) Do(ctx context.Context, req MetricsQueryRe
 		for _, pattern := range patterns {
 			matcher, err := labels.NewFastRegexMatcher(pattern)
 			if err != nil {
-				return nil, apierror.New(apierror.TypeBadData, err.Error())
+				return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, err.Error())
 			}
 
 			if matcher.MatchString(req.GetQuery()) {
@@ -166,7 +166,7 @@ func (s *spinOffSubqueriesMiddleware) Do(ctx context.Context, req MetricsQueryRe
 	if err != nil {
 		level.Warn(spanLog).Log("msg", "failed to parse query", "err", err)
 		s.metrics.spinOffSkipped.WithLabelValues(subquerySpinoffSkippedReasonParsingFailed).Inc()
-		return nil, apierror.New(apierror.TypeBadData, DecorateWithParamName(err, "query").Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, DecorateWithParamName(err, "query").Error())
 	}
 
 	spinOffQuery, err := mapper.Map(expr)
@@ -209,7 +209,7 @@ func (s *spinOffSubqueriesMiddleware) Do(ctx context.Context, req MetricsQueryRe
 	// Send hint with number of embedded queries to the sharding middleware
 	req, err = req.WithExpr(spinOffQuery)
 	if err != nil {
-		return nil, err
+		return responseWithFinalizer{}, err
 	}
 
 	annotationAccumulator := NewAnnotationAccumulator()
@@ -219,14 +219,14 @@ func (s *spinOffSubqueriesMiddleware) Do(ctx context.Context, req MetricsQueryRe
 	qry, err := newQuery(ctx, req, s.engine, lazyquery.NewLazyQueryable(queryable))
 	if err != nil {
 		level.Warn(spanLog).Log("msg", "failed to create new query from subquery spin request", "err", err)
-		return nil, apierror.New(apierror.TypeBadData, err.Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, err.Error())
 	}
 
 	res := qry.Exec(ctx)
 	extracted, err := promqlResultToSamples(res)
 	if err != nil {
 		level.Warn(spanLog).Log("msg", "failed to execute spun off subquery", "err", err)
-		return nil, mapEngineError(err)
+		return responseWithFinalizer{}, mapEngineError(err)
 	}
 
 	// Note that the positions based on the original query may be wrong as the rewritten
@@ -243,14 +243,17 @@ func (s *spinOffSubqueriesMiddleware) Do(ctx context.Context, req MetricsQueryRe
 	warn = removeDuplicates(warn)
 	info = removeDuplicates(info)
 
-	return &PrometheusResponse{
-		Status: statusSuccess,
-		Data: &PrometheusData{
-			ResultType: string(res.Value.Type()),
-			Result:     extracted,
+	return responseWithFinalizer{
+		response: &PrometheusResponse{
+			Status: statusSuccess,
+			Data: &PrometheusData{
+				ResultType: string(res.Value.Type()),
+				Result:     extracted,
+			},
+			Headers:  queryable.getResponseHeaders(),
+			Warnings: warn,
+			Infos:    info,
 		},
-		Headers:  queryable.getResponseHeaders(),
-		Warnings: warn,
-		Infos:    info,
+		finalizer: qry.Close,
 	}, nil
 }

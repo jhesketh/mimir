@@ -98,18 +98,18 @@ func newQueryShardingMiddleware(
 	})
 }
 
-func (s *querySharding) Do(ctx context.Context, r MetricsQueryRequest) (Response, error) {
+func (s *querySharding) Do(ctx context.Context, r MetricsQueryRequest) (responseWithFinalizer, error) {
 	log := spanlogger.FromContext(ctx, s.logger)
 
 	tenantIDs, err := tenant.TenantIDs(ctx)
 	if err != nil {
-		return nil, apierror.New(apierror.TypeBadData, err.Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, err.Error())
 	}
 
 	// Parse the query.
 	queryExpr, err := parser.ParseExpr(r.GetQuery())
 	if err != nil {
-		return nil, apierror.New(apierror.TypeBadData, DecorateWithParamName(err, "query").Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, DecorateWithParamName(err, "query").Error())
 	}
 
 	totalShards := s.getShardsForQuery(ctx, tenantIDs, r, queryExpr, log)
@@ -148,7 +148,7 @@ func (s *querySharding) Do(ctx context.Context, r MetricsQueryRequest) (Response
 
 	r, err = r.WithQuery(shardedQuery)
 	if err != nil {
-		return nil, apierror.New(apierror.TypeBadData, err.Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, err.Error())
 	}
 
 	annotationAccumulator := NewAnnotationAccumulator()
@@ -157,16 +157,16 @@ func (s *querySharding) Do(ctx context.Context, r MetricsQueryRequest) (Response
 	return ExecuteQueryOnQueryable(ctx, r, s.engine, shardedQueryable, annotationAccumulator)
 }
 
-func ExecuteQueryOnQueryable(ctx context.Context, r MetricsQueryRequest, engine *promql.Engine, queryable storage.Queryable, annotationAccumulator *AnnotationAccumulator) (Response, error) {
+func ExecuteQueryOnQueryable(ctx context.Context, r MetricsQueryRequest, engine *promql.Engine, queryable storage.Queryable, annotationAccumulator *AnnotationAccumulator) (responseWithFinalizer, error) {
 	qry, err := newQuery(ctx, r, engine, lazyquery.NewLazyQueryable(queryable))
 	if err != nil {
-		return nil, apierror.New(apierror.TypeBadData, err.Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, err.Error())
 	}
 
 	res := qry.Exec(ctx)
 	extracted, err := promqlResultToSamples(res)
 	if err != nil {
-		return nil, mapEngineError(err)
+		return responseWithFinalizer{}, mapEngineError(err)
 	}
 	// Note that the positions based on the original query may be wrong as the rewritten
 	// query which is actually used is different, but the user does not see the rewritten
@@ -190,16 +190,17 @@ func ExecuteQueryOnQueryable(ctx context.Context, r MetricsQueryRequest, engine 
 		headers = shardedQueryable.getResponseHeaders()
 	}
 
-	return &PrometheusResponse{
-		Status: statusSuccess,
-		Data: &PrometheusData{
-			ResultType: string(res.Value.Type()),
-			Result:     extracted,
-		},
-		Headers:  headers,
-		Warnings: warn,
-		Infos:    info,
-	}, nil
+	return responseWithFinalizer{
+		response: &PrometheusResponse{
+			Status: statusSuccess,
+			Data: &PrometheusData{
+				ResultType: string(res.Value.Type()),
+				Result:     extracted,
+			},
+			Headers:  headers,
+			Warnings: warn,
+			Infos:    info,
+		}}, nil
 }
 
 func newQuery(ctx context.Context, r MetricsQueryRequest, engine *promql.Engine, queryable storage.Queryable) (promql.Query, error) {
@@ -462,9 +463,9 @@ func promqlResultToSamples(res *promql.Result) ([]SampleStream, error) {
 				Labels: mimirpb.FromLabelsToLabelAdapters(sample.Metric),
 			}
 			if sample.H != nil {
-				ss.Histograms = mimirpb.FromHPointsToHistograms([]promql.HPoint{{T: sample.T, H: sample.H}})
+				ss.Histograms = mimirpb.FromHPointsToHistograms([]promql.HPoint{{T: sample.T, H: sample.H}}) // todo: ditto below comment
 			} else {
-				ss.Samples = mimirpb.FromFPointsToSamples([]promql.FPoint{{T: sample.T, F: sample.F}})
+				ss.Samples = mimirpb.FromFPointsToSamples([]promql.FPoint{{T: sample.T, F: sample.F}}) // TODO: Why use fromFpointstosamples here isntead of creating the mimirpb.Sample?
 			}
 			res = append(res, ss)
 		}

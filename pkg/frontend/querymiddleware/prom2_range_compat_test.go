@@ -23,7 +23,7 @@ func TestProm2RangeCompat_Do(t *testing.T) {
 		}
 	}
 
-	runHandler := func(ctx context.Context, inner MetricsQueryHandler, limits Limits, req MetricsQueryRequest) (Response, error) {
+	runHandler := func(ctx context.Context, inner MetricsQueryHandler, limits Limits, req MetricsQueryRequest) (responseWithFinalizer, error) {
 		middleware := newProm2RangeCompatMiddleware(limits, log.NewNopLogger(), prometheus.NewPedanticRegistry())
 		handler := middleware.Wrap(inner)
 		return handler.Do(ctx, req)

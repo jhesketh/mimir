@@ -40,7 +40,7 @@ func newQueryBlockerMiddleware(
 	})
 }
 
-func (qb *queryBlockerMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (Response, error) {
+func (qb *queryBlockerMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 	tenants, err := tenant.TenantIDs(ctx)
 	if err != nil {
 		return qb.next.Do(ctx, req)
@@ -50,7 +50,7 @@ func (qb *queryBlockerMiddleware) Do(ctx context.Context, req MetricsQueryReques
 		isBlocked := qb.isBlocked(tenant, req)
 		if isBlocked {
 			qb.blockedQueriesCounter.WithLabelValues(tenant, "blocked").Inc()
-			return nil, newQueryBlockedError()
+			return responseWithFinalizer{}, newQueryBlockedError()
 		}
 	}
 	return qb.next.Do(ctx, req)

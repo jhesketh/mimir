@@ -56,9 +56,9 @@ func TestStepAlignMiddleware_SingleUser(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var result *PrometheusRangeQueryRequest
 
-			next := HandlerFunc(func(_ context.Context, req MetricsQueryRequest) (Response, error) {
+			next := HandlerFunc(func(_ context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 				result = req.(*PrometheusRangeQueryRequest)
-				return nil, nil
+				return responseWithFinalizer{}, nil
 			})
 
 			limits := mockLimits{alignQueriesWithStep: true}
@@ -146,9 +146,9 @@ func TestStepAlignMiddleware_MultipleUsers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var result *PrometheusRangeQueryRequest
 
-			next := HandlerFunc(func(_ context.Context, req MetricsQueryRequest) (Response, error) {
+			next := HandlerFunc(func(_ context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 				result = req.(*PrometheusRangeQueryRequest)
-				return nil, nil
+				return responseWithFinalizer{}, nil
 			})
 
 			log := test.NewTestingLogger(t)

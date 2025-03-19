@@ -127,16 +127,16 @@ func (cfg *Config) cardinalityBasedShardingEnabled() bool {
 }
 
 // HandlerFunc is like http.HandlerFunc, but for MetricsQueryHandler.
-type HandlerFunc func(context.Context, MetricsQueryRequest) (Response, error)
+type HandlerFunc func(context.Context, MetricsQueryRequest) (responseWithFinalizer, error)
 
 // Do implements MetricsQueryHandler.
-func (q HandlerFunc) Do(ctx context.Context, req MetricsQueryRequest) (Response, error) {
+func (q HandlerFunc) Do(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 	return q(ctx, req)
 }
 
 // MetricsQueryHandler is like http.Handler, but specifically for Prometheus query and query_range calls.
 type MetricsQueryHandler interface {
-	Do(context.Context, MetricsQueryRequest) (Response, error)
+	Do(context.Context, MetricsQueryRequest) (responseWithFinalizer, error)
 }
 
 // LabelsHandlerFunc is like http.HandlerFunc, but for LabelsQueryHandler.

@@ -90,15 +90,15 @@ func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 type skipMiddleware struct {
 }
 
-func (s *skipMiddleware) Do(_ context.Context, _ MetricsQueryRequest) (Response, error) {
-	return nil, nil
+func (s *skipMiddleware) Do(_ context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
+	return responseWithFinalizer{}, nil
 }
 
 type errorMiddleware struct {
 }
 
-func (s *errorMiddleware) Do(_ context.Context, _ MetricsQueryRequest) (Response, error) {
-	return nil, apierror.New(apierror.TypeBadData, "TestErrorMiddleware")
+func (s *errorMiddleware) Do(_ context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
+	return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, "TestErrorMiddleware")
 }
 
 func TestRemoteReadRoundTripperCallsDownstreamOnAll(t *testing.T) {
@@ -177,10 +177,10 @@ func TestRemoteReadRoundTripper_ShouldAllowMiddlewaresToManipulateRequest(t *tes
 
 	// Create a middleware that manipulate the query start/end timestamps.
 	middleware := MetricsQueryMiddlewareFunc(func(next MetricsQueryHandler) MetricsQueryHandler {
-		return HandlerFunc(func(ctx context.Context, req MetricsQueryRequest) (Response, error) {
+		return HandlerFunc(func(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 			req, err := req.WithStartEnd(expectedStartMs, expectedEndMs)
 			if err != nil {
-				return nil, err
+				return responseWithFinalizer{}, err
 			}
 
 			return next.Do(ctx, req)
@@ -242,8 +242,8 @@ func TestRemoteReadRoundTripper_ShouldAllowMiddlewaresToManipulateRequest(t *tes
 func TestRemoteReadRoundTripper_ShouldAllowMiddlewaresToReturnEmptyResponse(t *testing.T) {
 	// Create a middleware that return an empty response.
 	middleware := MetricsQueryMiddlewareFunc(func(_ MetricsQueryHandler) MetricsQueryHandler {
-		return HandlerFunc(func(_ context.Context, _ MetricsQueryRequest) (Response, error) {
-			return newEmptyPrometheusResponse(), nil
+		return HandlerFunc(func(_ context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
+			return responseWithFinalizer{response: newEmptyPrometheusResponse()}, nil
 		})
 	})
 

@@ -763,9 +763,9 @@ type mockHandler struct {
 	mock.Mock
 }
 
-func (m *mockHandler) Do(ctx context.Context, req MetricsQueryRequest) (Response, error) {
+func (m *mockHandler) Do(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 	args := m.Called(ctx, req)
-	return args.Get(0).(Response), args.Error(1)
+	return args.Get(0).(responseWithFinalizer), args.Error(1)
 }
 
 func TestLimitedRoundTripper_MaxQueryParallelism(t *testing.T) {
@@ -800,7 +800,7 @@ func TestLimitedRoundTripper_MaxQueryParallelism(t *testing.T) {
 
 	_, err = NewLimitedParallelismRoundTripper(downstream, codec, mockLimits{maxQueryParallelism: maxQueryParallelism},
 		MetricsQueryMiddlewareFunc(func(next MetricsQueryHandler) MetricsQueryHandler {
-			return HandlerFunc(func(c context.Context, _ MetricsQueryRequest) (Response, error) {
+			return HandlerFunc(func(c context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
 				var wg sync.WaitGroup
 				for i := 0; i < maxQueryParallelism+20; i++ {
 					wg.Add(1)
@@ -810,7 +810,7 @@ func TestLimitedRoundTripper_MaxQueryParallelism(t *testing.T) {
 					}()
 				}
 				wg.Wait()
-				return newEmptyPrometheusResponse(), nil
+				return responseWithFinalizer{response: newEmptyPrometheusResponse()}, nil
 			})
 		}),
 	).RoundTrip(r)
@@ -844,14 +844,14 @@ func TestLimitedRoundTripper_MaxQueryParallelismLateScheduling(t *testing.T) {
 
 	_, err = NewLimitedParallelismRoundTripper(downstream, codec, mockLimits{maxQueryParallelism: maxQueryParallelism},
 		MetricsQueryMiddlewareFunc(func(next MetricsQueryHandler) MetricsQueryHandler {
-			return HandlerFunc(func(c context.Context, _ MetricsQueryRequest) (Response, error) {
+			return HandlerFunc(func(c context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
 				// fire up work and we don't wait.
 				for i := 0; i < 10; i++ {
 					go func() {
 						_, _ = next.Do(c, &PrometheusRangeQueryRequest{})
 					}()
 				}
-				return newEmptyPrometheusResponse(), nil
+				return responseWithFinalizer{response: newEmptyPrometheusResponse()}, nil
 			})
 		}),
 	).RoundTrip(r)
@@ -885,7 +885,7 @@ func TestLimitedRoundTripper_OriginalRequestContextCancellation(t *testing.T) {
 
 	_, err = NewLimitedParallelismRoundTripper(downstream, codec, mockLimits{maxQueryParallelism: maxQueryParallelism},
 		MetricsQueryMiddlewareFunc(func(next MetricsQueryHandler) MetricsQueryHandler {
-			return HandlerFunc(func(c context.Context, _ MetricsQueryRequest) (Response, error) {
+			return HandlerFunc(func(c context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
 				var wg sync.WaitGroup
 
 				// Fire up some work. Each sub-request will either be blocked in the sleep or in the queue
@@ -910,7 +910,7 @@ func TestLimitedRoundTripper_OriginalRequestContextCancellation(t *testing.T) {
 				wg.Wait()
 				assert.Less(t, time.Since(waitStart).Milliseconds(), int64(100))
 
-				return newEmptyPrometheusResponse(), nil
+				return responseWithFinalizer{response: newEmptyPrometheusResponse()}, nil
 			})
 		}),
 	).RoundTrip(r)
@@ -944,7 +944,7 @@ func BenchmarkLimitedParallelismRoundTripper(b *testing.B) {
 		for _, subRequestCount := range []int{1, 2, 5, 10, 20, 50, 100} {
 			tripper := NewLimitedParallelismRoundTripper(downstream, codec, mockLimits{maxQueryParallelism: maxParallelism},
 				MetricsQueryMiddlewareFunc(func(next MetricsQueryHandler) MetricsQueryHandler {
-					return HandlerFunc(func(c context.Context, _ MetricsQueryRequest) (Response, error) {
+					return HandlerFunc(func(c context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
 						wg := sync.WaitGroup{}
 						for i := 0; i < subRequestCount; i++ {
 							wg.Add(1)
@@ -954,7 +954,7 @@ func BenchmarkLimitedParallelismRoundTripper(b *testing.B) {
 							}()
 						}
 						wg.Wait()
-						return newEmptyPrometheusResponse(), nil
+						return responseWithFinalizer{response: newEmptyPrometheusResponse()}, nil
 					})
 				}),
 			)

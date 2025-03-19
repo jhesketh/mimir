@@ -140,13 +140,13 @@ func newLimitsMiddleware(l Limits, logger log.Logger) MetricsQueryMiddleware {
 	})
 }
 
-func (l limitsMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (Response, error) {
+func (l limitsMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (responseWithFinalizer, error) {
 	log, ctx := spanlogger.NewWithLogger(ctx, l.logger, "limits")
 	defer log.Finish()
 
 	tenantIDs, err := tenant.TenantIDs(ctx)
 	if err != nil {
-		return nil, apierror.New(apierror.TypeBadData, err.Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, err.Error())
 	}
 
 	// Clamp the time range based on the max query lookback and block retention period.
@@ -166,7 +166,7 @@ func (l limitsMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (Respon
 				"maxQueryLookback", maxQueryLookback,
 				"blocksRetentionPeriod", blocksRetentionPeriod)
 
-			return newEmptyPrometheusResponse(), nil
+			return responseWithFinalizer{response: newEmptyPrometheusResponse()}, nil
 		}
 
 		if r.GetStart() < minStartTime {
@@ -180,7 +180,7 @@ func (l limitsMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (Respon
 
 			r, err = r.WithStartEnd(minStartTime, r.GetEnd())
 			if err != nil {
-				return nil, apierror.New(apierror.TypeInternal, err.Error())
+				return responseWithFinalizer{}, apierror.New(apierror.TypeInternal, err.Error())
 			}
 		}
 	}
@@ -189,7 +189,7 @@ func (l limitsMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (Respon
 	if maxQuerySize := validation.SmallestPositiveNonZeroIntPerTenant(tenantIDs, l.MaxQueryExpressionSizeBytes); maxQuerySize > 0 {
 		querySize := len(r.GetQuery())
 		if querySize > maxQuerySize {
-			return nil, newMaxQueryExpressionSizeBytesError(querySize, maxQuerySize)
+			return responseWithFinalizer{}, newMaxQueryExpressionSizeBytesError(querySize, maxQuerySize)
 		}
 	}
 
@@ -197,7 +197,7 @@ func (l limitsMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (Respon
 	if maxQueryLength := validation.SmallestPositiveNonZeroDurationPerTenant(tenantIDs, l.MaxTotalQueryLength); maxQueryLength > 0 {
 		queryLen := timestamp.Time(r.GetEnd()).Sub(timestamp.Time(r.GetStart()))
 		if queryLen > maxQueryLength {
-			return nil, newMaxTotalQueryLengthError(queryLen, maxQueryLength)
+			return responseWithFinalizer{}, newMaxTotalQueryLengthError(queryLen, maxQueryLength)
 		}
 	}
 	return l.next.Do(ctx, r)
@@ -249,7 +249,7 @@ func (rt limitedParallelismRoundTripper) RoundTrip(r *http.Request) (*http.Respo
 	// parallel from upstream handlers and ensure that no more than MaxQueryParallelism
 	// sub-requests run in parallel.
 	response, err := rt.middleware.Wrap(
-		HandlerFunc(func(ctx context.Context, r MetricsQueryRequest) (Response, error) {
+		HandlerFunc(func(ctx context.Context, r MetricsQueryRequest) (responseWithFinalizer, error) {
 			if err := sem.Acquire(ctx, 1); err != nil {
 				// Without this change, using WithTimeoutCause has no effect when calling Do on
 				// limitedParallelismRoundTripper, since that would need to return the cause as error,
@@ -257,7 +257,7 @@ func (rt limitedParallelismRoundTripper) RoundTrip(r *http.Request) (*http.Respo
 				if errors.Is(err, ctx.Err()) {
 					err = context.Cause(ctx)
 				}
-				return nil, fmt.Errorf("could not acquire work: %w", err)
+				return responseWithFinalizer{}, fmt.Errorf("could not acquire work: %w", err)
 			}
 			defer sem.Release(1)
 
@@ -267,7 +267,12 @@ func (rt limitedParallelismRoundTripper) RoundTrip(r *http.Request) (*http.Respo
 		return nil, err
 	}
 
-	return rt.codec.EncodeMetricsQueryResponse(ctx, r, response)
+	// Perform any response finalizers
+	if response.finalizer != nil {
+		response.finalizer()
+	}
+
+	return rt.codec.EncodeMetricsQueryResponse(ctx, r, response.response)
 }
 
 // roundTripperHandler is an adapter that implements the MetricsQueryHandler interface using a http.RoundTripper to perform
@@ -279,23 +284,24 @@ type roundTripperHandler struct {
 	codec  Codec
 }
 
-func (rth roundTripperHandler) Do(ctx context.Context, r MetricsQueryRequest) (Response, error) {
+func (rth roundTripperHandler) Do(ctx context.Context, r MetricsQueryRequest) (responseWithFinalizer, error) {
 	request, err := rth.codec.EncodeMetricsQueryRequest(ctx, r)
 	if err != nil {
-		return nil, err
+		return responseWithFinalizer{}, err
 	}
 
 	if err := user.InjectOrgIDIntoHTTPRequest(ctx, request); err != nil {
-		return nil, apierror.New(apierror.TypeBadData, err.Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, err.Error())
 	}
 
 	response, err := rth.next.RoundTrip(request)
 	if err != nil {
-		return nil, err
+		return responseWithFinalizer{}, err
 	}
 	defer func() { _ = response.Body.Close() }()
 
-	return rth.codec.DecodeMetricsQueryResponse(ctx, response, r, rth.logger)
+	resp, err := rth.codec.DecodeMetricsQueryResponse(ctx, response, r, rth.logger)
+	return responseWithFinalizer{response: resp}, err
 }
 
 // smallestPositiveNonZeroDuration returns the smallest positive and non-zero value

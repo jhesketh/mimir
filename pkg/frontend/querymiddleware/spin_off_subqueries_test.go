@@ -291,7 +291,7 @@ func runSubquerySpinOffTests(t *testing.T, tests map[string]subquerySpinOffTest,
 			// Run the query without subquery spin-off.
 			expectedRes, err := downstream.Do(context.Background(), req)
 			require.Nil(t, err)
-			expectedPrometheusRes := expectedRes.(*PrometheusResponse)
+			expectedPrometheusRes := expectedRes.response.(*PrometheusResponse)
 			if !testData.expectSpecificOrder {
 				sort.Sort(byLabels(expectedPrometheusRes.Data.Result))
 			}
@@ -311,7 +311,7 @@ func runSubquerySpinOffTests(t *testing.T, tests map[string]subquerySpinOffTest,
 			// Create a fake middleware that tracks if it was called
 			called := false
 			fakeMiddleware := MetricsQueryMiddlewareFunc(func(next MetricsQueryHandler) MetricsQueryHandler {
-				return HandlerFunc(func(ctx context.Context, req MetricsQueryRequest) (Response, error) {
+				return HandlerFunc(func(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 					called = true
 					return next.Do(ctx, req)
 				})
@@ -341,7 +341,7 @@ func runSubquerySpinOffTests(t *testing.T, tests map[string]subquerySpinOffTest,
 
 			// Ensure the two results matches (float precision can slightly differ, there's no guarantee in PromQL engine too
 			// if you rerun the same query twice).
-			shardedPrometheusRes := spinoffRes.(*PrometheusResponse)
+			shardedPrometheusRes := spinoffRes.response.(*PrometheusResponse)
 			if !testData.expectSpecificOrder {
 				sort.Sort(byLabels(shardedPrometheusRes.Data.Result))
 			}

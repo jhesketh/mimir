@@ -53,12 +53,12 @@ var (
 )
 
 func mockHandlerWith(resp *PrometheusResponse, err error) MetricsQueryHandler {
-	return HandlerFunc(func(ctx context.Context, _ MetricsQueryRequest) (Response, error) {
+	return HandlerFunc(func(ctx context.Context, _ MetricsQueryRequest) (responseWithFinalizer, error) {
 		if expired := ctx.Err(); expired != nil {
-			return nil, expired
+			return responseWithFinalizer{}, expired
 		}
 
-		return resp, err
+		return responseWithFinalizer{response: resp}, err
 	})
 }
 
@@ -721,7 +721,7 @@ func TestQuerySharding_Correctness(t *testing.T) {
 					// Run the query without sharding.
 					expectedRes, err := downstream.Do(context.Background(), req)
 					require.Nil(t, err)
-					expectedPrometheusRes := expectedRes.(*PrometheusResponse)
+					expectedPrometheusRes := expectedRes.response.(*PrometheusResponse)
 					if !testData.expectSpecificOrder {
 						sort.Sort(byLabels(expectedPrometheusRes.Data.Result))
 					}
@@ -753,7 +753,7 @@ func TestQuerySharding_Correctness(t *testing.T) {
 
 							// Ensure the two results matches (float precision can slightly differ, there's no guarantee in PromQL engine too
 							// if you rerun the same query twice).
-							shardedPrometheusRes := shardedRes.(*PrometheusResponse)
+							shardedPrometheusRes := shardedRes.response.(*PrometheusResponse)
 							if !testData.expectSpecificOrder {
 								sort.Sort(byLabels(shardedPrometheusRes.Data.Result))
 							}
@@ -824,7 +824,7 @@ func TestQuerySharding_NonMonotonicHistogramBuckets(t *testing.T) {
 			expectedRes, err := downstream.Do(context.Background(), req)
 			require.Nil(t, err)
 
-			expectedPrometheusRes := expectedRes.(*PrometheusResponse)
+			expectedPrometheusRes := expectedRes.response.(*PrometheusResponse)
 			sort.Sort(byLabels(expectedPrometheusRes.Data.Result))
 
 			// Ensure the query produces some results.
@@ -851,7 +851,7 @@ func TestQuerySharding_NonMonotonicHistogramBuckets(t *testing.T) {
 
 					// Ensure the two results matches (float precision can slightly differ, there's no guarantee in PromQL engine too
 					// if you rerun the same query twice).
-					shardedPrometheusRes := shardedRes.(*PrometheusResponse)
+					shardedPrometheusRes := shardedRes.response.(*PrometheusResponse)
 					sort.Sort(byLabels(shardedPrometheusRes.Data.Result))
 					approximatelyEquals(t, expectedPrometheusRes, shardedPrometheusRes)
 
@@ -934,7 +934,7 @@ func TestQueryshardingDeterminism(t *testing.T) {
 		shardedRes, err := shardingware.Wrap(downstream).Do(user.InjectOrgID(context.Background(), "test"), req)
 		require.NoError(t, err)
 
-		shardedPrometheusRes := shardedRes.(*PrometheusResponse)
+		shardedPrometheusRes := shardedRes.response.(*PrometheusResponse)
 
 		sampleStreams, err := ResponseToSamples(shardedPrometheusRes)
 		require.NoError(t, err)
@@ -1150,7 +1150,7 @@ func testQueryShardingFunctionCorrectness(t *testing.T, queryable storage.Querya
 				require.Nil(t, err)
 
 				// Ensure the query produces some results.
-				require.NotEmpty(t, expectedRes.(*PrometheusResponse).Data.Result)
+				require.NotEmpty(t, expectedRes.response.(*PrometheusResponse).Data.Result)
 
 				// Run the query with sharding.
 				shardedRes, err := shardingware.Wrap(downstream).Do(user.InjectOrgID(context.Background(), "test"), req)
@@ -1158,7 +1158,7 @@ func testQueryShardingFunctionCorrectness(t *testing.T, queryable storage.Querya
 
 				// Ensure the two results matches (float precision can slightly differ, there's no guarantee in PromQL engine too
 				// if you rerun the same query twice).
-				approximatelyEquals(t, expectedRes.(*PrometheusResponse), shardedRes.(*PrometheusResponse))
+				approximatelyEquals(t, expectedRes.response.(*PrometheusResponse), shardedRes.response.(*PrometheusResponse))
 			})
 		}
 	}
@@ -1208,7 +1208,7 @@ func TestQuerySharding_ShouldSkipShardingViaOption(t *testing.T) {
 
 	res, err := shardingware.Wrap(downstream).Do(user.InjectOrgID(context.Background(), "test"), req)
 	require.NoError(t, err)
-	assert.Equal(t, statusSuccess, res.(*PrometheusResponse).GetStatus())
+	assert.Equal(t, statusSuccess, res.response.(*PrometheusResponse).GetStatus())
 	// Ensure we get the same request downstream. No sharding
 	downstream.AssertCalled(t, "Do", mock.Anything, req)
 	downstream.AssertNumberOfCalls(t, "Do", 1)
@@ -1237,7 +1237,7 @@ func TestQuerySharding_ShouldOverrideShardingSizeViaOption(t *testing.T) {
 
 	res, err := shardingware.Wrap(downstream).Do(user.InjectOrgID(context.Background(), "test"), req)
 	require.NoError(t, err)
-	assert.Equal(t, statusSuccess, res.(*PrometheusResponse).GetStatus())
+	assert.Equal(t, statusSuccess, res.response.(*PrometheusResponse).GetStatus())
 	downstream.AssertCalled(t, "Do", mock.Anything, mock.Anything)
 	// we expect 128 calls to the downstream handler and not the original 16.
 	downstream.AssertNumberOfCalls(t, "Do", 128)
@@ -1393,7 +1393,7 @@ func TestQuerySharding_ShouldSupportMaxShardedQueries(t *testing.T) {
 
 			res, err := shardingware.Wrap(downstream).Do(user.InjectOrgID(context.Background(), "test"), req)
 			require.NoError(t, err)
-			assert.Equal(t, statusSuccess, res.(*PrometheusResponse).GetStatus())
+			assert.Equal(t, statusSuccess, res.response.(*PrometheusResponse).GetStatus())
 			assert.Equal(t, testData.expectedShards, len(uniqueShards))
 		})
 	}
@@ -1486,7 +1486,7 @@ func TestQuerySharding_ShouldSupportMaxRegexpSizeBytes(t *testing.T) {
 
 			res, err := shardingware.Wrap(downstream).Do(user.InjectOrgID(context.Background(), "test"), req)
 			require.NoError(t, err)
-			assert.Equal(t, statusSuccess, res.(*PrometheusResponse).GetStatus())
+			assert.Equal(t, statusSuccess, res.response.(*PrometheusResponse).GetStatus())
 			assert.Equal(t, testData.expectedShards, len(uniqueShards))
 		})
 	}
@@ -1742,7 +1742,7 @@ func TestQuerySharding_ShouldUseCardinalityEstimate(t *testing.T) {
 
 			res, err := shardingware.Wrap(downstream).Do(user.InjectOrgID(context.Background(), "test"), tt.req)
 			require.NoError(t, err)
-			assert.Equal(t, statusSuccess, res.(*PrometheusResponse).GetStatus())
+			assert.Equal(t, statusSuccess, res.response.(*PrometheusResponse).GetStatus())
 			downstream.AssertCalled(t, "Do", mock.Anything, mock.Anything)
 			downstream.AssertNumberOfCalls(t, "Do", tt.expectedCalls)
 		})
@@ -1851,33 +1851,33 @@ func TestQuerySharding_Annotations(t *testing.T) {
 			// Run the query without sharding.
 			expectedRes, err := downstream.Do(injectedContext, req)
 			require.Nil(t, err)
-			expectedPrometheusRes := expectedRes.(*PrometheusResponse)
+			expectedPrometheusRes := expectedRes.response.(*PrometheusResponse)
 
 			// Ensure the query produces some results.
-			require.NotEmpty(t, expectedRes.(*PrometheusResponse).Data.Result)
+			require.NotEmpty(t, expectedRes.response.(*PrometheusResponse).Data.Result)
 
 			// Run the query with sharding.
 			shardedRes, err := shardingware.Wrap(downstream).Do(injectedContext, req)
 			require.Nil(t, err)
 
 			// Ensure the query produces some results.
-			require.NotEmpty(t, shardedRes.(*PrometheusResponse).Data.Result)
+			require.NotEmpty(t, shardedRes.response.(*PrometheusResponse).Data.Result)
 
 			// Run the query with splitting.
 			splitRes, err := splitware.Wrap(downstream).Do(injectedContext, req)
 			require.Nil(t, err)
 
 			// Ensure the query produces some results.
-			require.NotEmpty(t, splitRes.(*PrometheusResponse).Data.Result)
+			require.NotEmpty(t, splitRes.response.(*PrometheusResponse).Data.Result)
 
 			expected := expectedPrometheusRes.Infos
-			actualSharded := shardedRes.(*PrometheusResponse).Infos
-			actualSplit := splitRes.(*PrometheusResponse).Infos
+			actualSharded := shardedRes.response.(*PrometheusResponse).Infos
+			actualSplit := splitRes.response.(*PrometheusResponse).Infos
 
 			if template.isWarning {
 				expected = expectedPrometheusRes.Warnings
-				actualSharded = shardedRes.(*PrometheusResponse).Warnings
-				actualSplit = splitRes.(*PrometheusResponse).Warnings
+				actualSharded = shardedRes.response.(*PrometheusResponse).Warnings
+				actualSplit = splitRes.response.(*PrometheusResponse).Warnings
 			}
 
 			require.NotEmpty(t, expected)
@@ -2218,16 +2218,16 @@ type downstreamHandler struct {
 	includePositionInformationInAnnotations bool
 }
 
-func (h *downstreamHandler) Do(ctx context.Context, r MetricsQueryRequest) (Response, error) {
+func (h *downstreamHandler) Do(ctx context.Context, r MetricsQueryRequest) (responseWithFinalizer, error) {
 	qry, err := newQuery(ctx, r, h.engine, h.queryable)
 	if err != nil {
-		return nil, err
+		return responseWithFinalizer{}, err
 	}
 
 	res := qry.Exec(ctx)
 	extracted, err := promqlResultToSamples(res)
 	if err != nil {
-		return nil, err
+		return responseWithFinalizer{}, err
 	}
 
 	resp := &PrometheusResponse{
@@ -2251,7 +2251,7 @@ func (h *downstreamHandler) Do(ctx context.Context, r MetricsQueryRequest) (Resp
 	if len(infos) > 0 {
 		resp.Infos = infos
 	}
-	return resp, nil
+	return responseWithFinalizer{response: resp}, nil
 }
 
 func storageSeriesQueryable(series []storage.Series) storage.Queryable {

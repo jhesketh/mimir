@@ -64,14 +64,14 @@ func newRetryMiddleware(log log.Logger, maxRetries int, metrics prometheus.Obser
 	})
 }
 
-func (r retry) Do(ctx context.Context, req MetricsQueryRequest) (Response, error) {
+func (r retry) Do(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 	tries := 0
 	defer func() { r.metrics.Observe(float64(tries)) }()
 
 	var lastErr error
 	for ; tries < r.maxRetries; tries++ {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return responseWithFinalizer{}, ctx.Err()
 		}
 		resp, err := r.next.Do(ctx, req)
 		if err == nil {
@@ -79,7 +79,7 @@ func (r retry) Do(ctx context.Context, req MetricsQueryRequest) (Response, error
 		}
 
 		if apierror.IsNonRetryableAPIError(err) || errors.Is(err, context.Canceled) {
-			return nil, err
+			return responseWithFinalizer{}, err
 		}
 		// Retry if we get a HTTP 500 or a non-HTTP error.
 		httpResp, ok := httpgrpc.HTTPResponseFromError(err)
@@ -90,7 +90,7 @@ func (r retry) Do(ctx context.Context, req MetricsQueryRequest) (Response, error
 			continue
 		}
 
-		return nil, err
+		return responseWithFinalizer{}, err
 	}
-	return nil, lastErr
+	return responseWithFinalizer{}, lastErr
 }

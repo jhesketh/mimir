@@ -200,6 +200,12 @@ type Response interface {
 	GetHeaders() []*PrometheusHeader
 }
 
+// todo comment
+type responseWithFinalizer struct {
+	response  Response
+	finalizer func()
+}
+
 type prometheusCodecMetrics struct {
 	duration *prometheus.HistogramVec
 	size     *prometheus.HistogramVec

@@ -42,7 +42,7 @@ func newStepAlignMiddleware(limits Limits, logger log.Logger, registerer prometh
 	})
 }
 
-func (s *stepAlignMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (Response, error) {
+func (s *stepAlignMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (responseWithFinalizer, error) {
 	tenants, err := tenant.TenantIDs(ctx)
 	if err != nil {
 		return s.next.Do(ctx, r)
@@ -70,7 +70,7 @@ func (s *stepAlignMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (Re
 
 			updatedReq, err := r.WithStartEnd(start, end)
 			if err != nil {
-				return nil, err
+				return responseWithFinalizer{}, err
 			}
 
 			return s.next.Do(ctx, updatedReq)

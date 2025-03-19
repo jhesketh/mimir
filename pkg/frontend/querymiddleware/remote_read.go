@@ -69,7 +69,7 @@ func (r *remoteReadRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 
 		// Run the query through the middlewares.
 		var updatedQueryReq *remoteReadQueryRequest
-		handler := r.middleware.Wrap(HandlerFunc(func(_ context.Context, req MetricsQueryRequest) (Response, error) {
+		handler := r.middleware.Wrap(HandlerFunc(func(_ context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 			var ok bool
 
 			// The middlewares are used only for validation, but some middlewares may manipulate
@@ -77,10 +77,10 @@ func (r *remoteReadRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 			// capture the final request in case it was manipulated.
 			if updatedQueryReq, ok = req.(*remoteReadQueryRequest); !ok {
 				// This should never happen.
-				return nil, errors.New("unexpected logic bug: remote read roundtripper received an unexpected data type")
+				return responseWithFinalizer{}, errors.New("unexpected logic bug: remote read roundtripper received an unexpected data type")
 			}
 
-			return nil, nil
+			return responseWithFinalizer{}, nil
 		}))
 
 		_, err = handler.Do(req.Context(), origQueryReq)

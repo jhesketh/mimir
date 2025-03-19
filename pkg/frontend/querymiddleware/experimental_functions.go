@@ -36,10 +36,10 @@ func newExperimentalFunctionsMiddleware(limits Limits, logger log.Logger) Metric
 	})
 }
 
-func (m *experimentalFunctionsMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (Response, error) {
+func (m *experimentalFunctionsMiddleware) Do(ctx context.Context, req MetricsQueryRequest) (responseWithFinalizer, error) {
 	tenantIDs, err := tenant.TenantIDs(ctx)
 	if err != nil {
-		return nil, apierror.New(apierror.TypeBadData, err.Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, err.Error())
 	}
 
 	enabledExperimentalFunctions := make(map[string][]string, len(tenantIDs))
@@ -60,7 +60,7 @@ func (m *experimentalFunctionsMiddleware) Do(ctx context.Context, req MetricsQue
 
 	expr, err := parser.ParseExpr(req.GetQuery())
 	if err != nil {
-		return nil, apierror.New(apierror.TypeBadData, DecorateWithParamName(err, "query").Error())
+		return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, DecorateWithParamName(err, "query").Error())
 	}
 	funcs := containedExperimentalFunctions(expr)
 	if len(funcs) == 0 {
@@ -78,7 +78,7 @@ func (m *experimentalFunctionsMiddleware) Do(ctx context.Context, req MetricsQue
 			}
 			if !slices.Contains(enabled, name) {
 				err := fmt.Errorf("function %q is not enabled for tenant %s", name, tenantID)
-				return nil, apierror.New(apierror.TypeBadData, DecorateWithParamName(err, "query").Error())
+				return responseWithFinalizer{}, apierror.New(apierror.TypeBadData, DecorateWithParamName(err, "query").Error())
 			}
 		}
 	}

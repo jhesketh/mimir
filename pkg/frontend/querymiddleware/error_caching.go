@@ -74,7 +74,7 @@ type errorCachingHandler struct {
 	cacheStoreSkipped   *prometheus.CounterVec
 }
 
-func (e *errorCachingHandler) Do(ctx context.Context, request MetricsQueryRequest) (Response, error) {
+func (e *errorCachingHandler) Do(ctx context.Context, request MetricsQueryRequest) (responseWithFinalizer, error) {
 	spanLog := spanlogger.FromContext(ctx, e.logger)
 	tenantIDs, err := tenant.TenantIDs(ctx)
 	if err != nil {
@@ -99,7 +99,7 @@ func (e *errorCachingHandler) Do(ctx context.Context, request MetricsQueryReques
 			"hashed_key", hashedKey,
 		)
 
-		return nil, cachedErr
+		return responseWithFinalizer{}, cachedErr
 	}
 
 	res, err := e.next.Do(ctx, request)

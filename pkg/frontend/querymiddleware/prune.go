@@ -30,7 +30,7 @@ func newPruneMiddleware(logger log.Logger) MetricsQueryMiddleware {
 	})
 }
 
-func (p *pruneMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (Response, error) {
+func (p *pruneMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (responseWithFinalizer, error) {
 	log := spanlogger.FromContext(ctx, p.logger)
 
 	prunedQuery, success, err := p.pruneQuery(ctx, r.GetQuery())
@@ -49,7 +49,7 @@ func (p *pruneMiddleware) Do(ctx context.Context, r MetricsQueryRequest) (Respon
 
 	updatedReq, err := r.WithQuery(prunedQuery)
 	if err != nil {
-		return nil, err
+		return responseWithFinalizer{}, err
 	}
 
 	return p.next.Do(ctx, updatedReq)

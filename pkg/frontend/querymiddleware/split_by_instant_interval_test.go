@@ -525,7 +525,7 @@ func TestInstantQuerySplittingCorrectness(t *testing.T) {
 							_, ctx := stats.ContextWithEmptyStats(context.Background())
 							expectedRes, err := downstream.Do(ctx, req)
 							require.Nil(t, err)
-							expectedPrometheusRes := expectedRes.(*PrometheusResponse)
+							expectedPrometheusRes := expectedRes.response.(*PrometheusResponse)
 							sort.Sort(byLabels(expectedPrometheusRes.Data.Result))
 
 							// Ensure the query produces some results.
@@ -544,7 +544,7 @@ func TestInstantQuerySplittingCorrectness(t *testing.T) {
 							splitRes, err := splittingware.Wrap(downstream).Do(user.InjectOrgID(ctx, "test"), req)
 							require.Nil(t, err)
 
-							splitPrometheusRes := splitRes.(*PrometheusResponse)
+							splitPrometheusRes := splitRes.response.(*PrometheusResponse)
 							sort.Sort(byLabels(splitPrometheusRes.Data.Result))
 
 							approximatelyEquals(t, expectedPrometheusRes, splitPrometheusRes)
@@ -637,7 +637,7 @@ func TestInstantQuerySplittingHTTPOptions(t *testing.T) {
 
 			res, err := splittingware.Wrap(downstream).Do(user.InjectOrgID(context.Background(), "test"), req)
 			require.NoError(t, err)
-			assert.Equal(t, statusSuccess, res.(*PrometheusResponse).GetStatus())
+			assert.Equal(t, statusSuccess, res.response.(*PrometheusResponse).GetStatus())
 
 			downstream.AssertCalled(t, "Do", mock.Anything, mock.Anything)
 			downstream.AssertNumberOfCalls(t, "Do", tt.expectedDownstreamCall)
