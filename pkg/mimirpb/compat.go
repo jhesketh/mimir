@@ -313,6 +313,7 @@ func FromHistogramToHistogramProto(timestamp int64, h *histogram.Histogram) Hist
 }
 
 // FromFloatHistogramToHistogramProto does not make a deepcopy, slices are referenced
+// TODO: Check this is okay
 func FromFloatHistogramToHistogramProto(timestamp int64, fh *histogram.FloatHistogram) Histogram {
 	if fh == nil {
 		panic("FromFloatHistogramToHistogramProto called on nil histogram")

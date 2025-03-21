@@ -200,6 +200,22 @@ type Response interface {
 	GetHeaders() []*PrometheusHeader
 }
 
+// todo comment
+type responseWithFinalizer struct {
+	PrometheusResponse
+	finalizers []func()
+}
+
+func (r responseWithFinalizer) close() {
+	for _, f := range r.finalizers {
+		f()
+	}
+}
+
+func (r responseWithFinalizer) addFinalizer(f func()) {
+	r.finalizers = append(r.finalizers, f)
+}
+
 type prometheusCodecMetrics struct {
 	duration *prometheus.HistogramVec
 	size     *prometheus.HistogramVec
@@ -275,9 +291,19 @@ func (prometheusCodec) MergeResponse(responses ...Response) (Response, error) {
 	promWarningsMap := make(map[string]struct{}, 0)
 	promInfosMap := make(map[string]struct{}, 0)
 	var present struct{}
+	var finalizers []func()
 
 	for _, res := range responses {
-		pr := res.(*PrometheusResponse)
+		var pr *PrometheusResponse
+		if promRes, ok := res.(*PrometheusResponse); ok {
+			pr = promRes
+		} else if rwf, ok := res.(*responseWithFinalizer); ok {
+			pr = &rwf.PrometheusResponse
+			finalizers = append(finalizers, rwf.finalizers...)
+		} else {
+			return nil, fmt.Errorf("unexpected response type: %T", res)
+		}
+
 		if pr.Status != statusSuccess {
 			return nil, fmt.Errorf("can't merge an unsuccessful response")
 		} else if pr.Data == nil {
@@ -308,7 +334,7 @@ func (prometheusCodec) MergeResponse(responses ...Response) (Response, error) {
 	// Merge the responses.
 	sort.Sort(byFirstTime(promResponses))
 
-	return &PrometheusResponse{
+	mergedResponse := &PrometheusResponse{
 		Status: statusSuccess,
 		Data: &PrometheusData{
 			ResultType: model.ValMatrix.String(),
@@ -316,7 +342,16 @@ func (prometheusCodec) MergeResponse(responses ...Response) (Response, error) {
 		},
 		Warnings: promWarnings,
 		Infos:    promInfos,
-	}, nil
+	}
+
+	if len(finalizers) > 0 {
+		return &responseWithFinalizer{
+			PrometheusResponse: *mergedResponse,
+			finalizers:         finalizers,
+		}, nil
+	}
+
+	return mergedResponse, nil
 }
 
 func (c prometheusCodec) DecodeMetricsQueryRequest(_ context.Context, r *http.Request) (MetricsQueryRequest, error) {

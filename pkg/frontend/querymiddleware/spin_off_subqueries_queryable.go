@@ -89,10 +89,21 @@ func (q *spinOffSubqueriesQuerier) Select(ctx context.Context, _ bool, hints *st
 		if err != nil {
 			return storage.ErrSeriesSet(err)
 		}
-		promRes, ok := resp.(*PrometheusResponse)
-		if !ok {
-			return storage.ErrSeriesSet(errors.Errorf("error invalid response type: %T, expected: %T", resp, &PrometheusResponse{}))
+		// Check if response needs closing
+		if r, ok := resp.(*responseWithFinalizer); ok {
+			defer r.close()
 		}
+
+		var promRes *PrometheusResponse
+		if pr, ok := resp.(*PrometheusResponse); ok {
+			promRes = pr
+		} else if rwf, ok := resp.(*responseWithFinalizer); ok {
+			promRes = &rwf.PrometheusResponse
+		} else {
+			return storage.ErrSeriesSet(errors.Errorf("error invalid response type: %T, expected: %T or %T",
+				resp, &PrometheusResponse{}, &responseWithFinalizer{}))
+		}
+
 		resStreams, err := ResponseToSamples(promRes)
 		if err != nil {
 			return storage.ErrSeriesSet(err)
@@ -179,10 +190,20 @@ func (q *spinOffSubqueriesQuerier) Select(ctx context.Context, _ bool, hints *st
 			if err != nil {
 				return storage.ErrSeriesSet(fmt.Errorf("error running subquery: %w", err))
 			}
-			promRes, ok := resp.(*PrometheusResponse)
-			if !ok {
-				return storage.ErrSeriesSet(errors.Errorf("error invalid response type: %T, expected: %T", resp, &PrometheusResponse{}))
+			// Check if response needs closing
+			if r, ok := resp.(*responseWithFinalizer); ok {
+				defer r.close()
 			}
+
+			var promRes *PrometheusResponse
+			if pr, ok := resp.(*PrometheusResponse); ok {
+				promRes = pr
+			} else if rwf, ok := resp.(*responseWithFinalizer); ok {
+				promRes = &rwf.PrometheusResponse
+			} else {
+				return storage.ErrSeriesSet(errors.Errorf("error invalid response type: %T, expected: %T or %T", resp, &PrometheusResponse{}, &responseWithFinalizer{}))
+			}
+
 			resStreams, err := ResponseToSamples(promRes)
 			if err != nil {
 				return storage.ErrSeriesSet(err)
@@ -192,6 +213,9 @@ func (q *spinOffSubqueriesQuerier) Select(ctx context.Context, _ bool, hints *st
 			q.annotationAccumulator.addWarnings(promRes.Warnings)
 		}
 
+		// TODO: Check that nothing needs to be retained. If we do, we might need a wrapper around storage.SeriesSet to move
+		// finalizers into there.
+		// However newSeriesSetFromEmbeddedQueriesResults should copy most of the values. The main concern is Histograms.
 		return storage.NewMergeSeriesSet(sets, 0, storage.ChainedSeriesMerge)
 	default:
 		return storage.ErrSeriesSet(errors.Errorf("invalid metric name for the spin-off middleware: %s", name))

@@ -267,6 +267,11 @@ func (rt limitedParallelismRoundTripper) RoundTrip(r *http.Request) (*http.Respo
 		return nil, err
 	}
 
+	// Check if response needs closing
+	if r, ok := response.(*responseWithFinalizer); ok {
+		r.close()
+	}
+
 	return rt.codec.EncodeMetricsQueryResponse(ctx, r, response)
 }
 

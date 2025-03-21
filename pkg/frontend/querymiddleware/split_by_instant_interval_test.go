@@ -525,6 +525,7 @@ func TestInstantQuerySplittingCorrectness(t *testing.T) {
 							_, ctx := stats.ContextWithEmptyStats(context.Background())
 							expectedRes, err := downstream.Do(ctx, req)
 							require.Nil(t, err)
+							// downstreamHandler always returns a PrometheusResponse (not responseWithFinalizer)
 							expectedPrometheusRes := expectedRes.(*PrometheusResponse)
 							sort.Sort(byLabels(expectedPrometheusRes.Data.Result))
 
@@ -544,7 +545,13 @@ func TestInstantQuerySplittingCorrectness(t *testing.T) {
 							splitRes, err := splittingware.Wrap(downstream).Do(user.InjectOrgID(ctx, "test"), req)
 							require.Nil(t, err)
 
-							splitPrometheusRes := splitRes.(*PrometheusResponse)
+							// splittingware may return responseWithFinalizer or PrometheusResponse
+							var splitPrometheusRes *PrometheusResponse
+							if rwf, ok := splitRes.(*responseWithFinalizer); ok {
+								splitPrometheusRes = &rwf.PrometheusResponse
+							} else {
+								splitPrometheusRes = splitRes.(*PrometheusResponse)
+							}
 							sort.Sort(byLabels(splitPrometheusRes.Data.Result))
 
 							approximatelyEquals(t, expectedPrometheusRes, splitPrometheusRes)
@@ -635,9 +642,18 @@ func TestInstantQuerySplittingHTTPOptions(t *testing.T) {
 				Status: statusSuccess, Data: tt.data,
 			}, nil)
 
-			res, err := splittingware.Wrap(downstream).Do(user.InjectOrgID(context.Background(), "test"), req)
+			ctx := user.InjectOrgID(context.Background(), "test")
+			handler := splittingware.Wrap(downstream)
+			res, err := handler.Do(ctx, req)
 			require.NoError(t, err)
-			assert.Equal(t, statusSuccess, res.(*PrometheusResponse).GetStatus())
+
+			var status string
+			if promRes, ok := res.(*PrometheusResponse); ok {
+				status = promRes.GetStatus()
+			} else if rwf, ok := res.(*responseWithFinalizer); ok {
+				status = rwf.PrometheusResponse.GetStatus()
+			}
+			assert.Equal(t, statusSuccess, status)
 
 			downstream.AssertCalled(t, "Do", mock.Anything, mock.Anything)
 			downstream.AssertNumberOfCalls(t, "Do", tt.expectedDownstreamCall)

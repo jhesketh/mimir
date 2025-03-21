@@ -1699,6 +1699,11 @@ func (q roundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 
+	// If the response has a finalizer, we need to close it when we're done.
+	if rwf, ok := response.(*responseWithFinalizer); ok {
+		defer rwf.close()
+	}
+
 	return q.codec.EncodeMetricsQueryResponse(r.Context(), r, response)
 }
 

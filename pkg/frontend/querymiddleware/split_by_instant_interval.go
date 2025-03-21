@@ -210,16 +210,20 @@ func (s *splitInstantQueryByIntervalMiddleware) Do(ctx context.Context, req Metr
 	warn = removeDuplicates(warn)
 	info = removeDuplicates(info)
 
-	return &PrometheusResponse{
-		Status: statusSuccess,
-		Data: &PrometheusData{
-			ResultType: string(res.Value.Type()),
-			Result:     extracted,
+	resp := &responseWithFinalizer{
+		PrometheusResponse: PrometheusResponse{
+			Status: statusSuccess,
+			Data: &PrometheusData{
+				ResultType: string(res.Value.Type()),
+				Result:     extracted,
+			},
+			Headers:  shardedQueryable.getResponseHeaders(),
+			Warnings: warn,
+			Infos:    info,
 		},
-		Headers:  shardedQueryable.getResponseHeaders(),
-		Warnings: warn,
-		Infos:    info,
-	}, nil
+	}
+	resp.addFinalizer(qry.Close)
+	return resp, nil
 }
 
 // getSplitIntervalForQuery calculates and return the split interval that should be used to run the instant query.
